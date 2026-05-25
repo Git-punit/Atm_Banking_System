@@ -1,41 +1,44 @@
 """
 fraud_detection.py — Real-Time Fraud Detection Pipeline
 
-Golden reference implementation for the LLM evaluation prompt.
-Domain: Fintech — Payment Transaction Fraud Detection
+This is the reference implementation I wrote to benchmark LLM responses against.
+The domain is fintech — specifically evaluating payment transactions in real time
+and deciding whether to approve, flag, or block them based on a configurable
+set of fraud rules.
 
-This module provides a self-contained, configurable fraud detection pipeline
-that evaluates payment transactions against a rule engine, computes a weighted
-risk score, and returns a structured decision with a full audit log.
+I tried to keep this production-minded without over-engineering it. The main
+design choices worth knowing upfront:
+
+  - Transaction history is updated *after* evaluation, so a transaction can't
+    count toward its own velocity or repeated-amount checks.
+  - Each rule's exceptions are caught individually. One broken rule shouldn't
+    take down the whole pipeline — in payments, failing open is usually safer
+    than failing closed.
+  - R7 (currency mismatch) silently skips users with no home currency on file
+    rather than flagging everything. Noise is the enemy of a useful fraud signal.
+  - frozenset for country/MCC lists gives O(1) lookups and prevents accidental
+    mutation after init.
+  - The "Z" → "+00:00" normalisation keeps this compatible with Python 3.10.
+    fromisoformat() didn't handle "Z" until 3.11.
 
 Usage:
+    python3 fraud_detection.py          # runs the demo
     from fraud_detection import FraudDetectionPipeline
-    pipeline = FraudDetectionPipeline(config={...})
-    decision = pipeline.evaluate(transaction_dict)
-
-Author: Golden Reference Implementation
-Version: 1.0.0
 """
 
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Module-level logger — no handlers attached; callers configure logging.
-# ---------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 PIPELINE_VERSION = "1.0.0"
 
-# Required fields and their expected Python types for input validation.
+# Every transaction must have these fields with these types.
 _REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
     "transaction_id": str,
     "user_id": str,
@@ -48,38 +51,30 @@ _REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
     "is_international": bool,
 }
 
-# Valid ISO 4217 currency codes (subset — extend as needed).
+# Recognised ISO 4217 currency codes — extend this list as needed.
 _VALID_CURRENCIES: frozenset[str] = frozenset([
     "USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "CNY",
     "SEK", "NZD", "MXN", "SGD", "HKD", "NOK", "KRW", "TRY",
     "INR", "BRL", "ZAR", "NGN", "RUB",
 ])
 
-# Valid ISO 3166-1 alpha-2 country codes (subset — extend as needed).
-_VALID_COUNTRY_CODES: frozenset[str] = frozenset([
-    "US", "GB", "DE", "FR", "JP", "AU", "CA", "CH", "CN", "SE",
-    "NZ", "MX", "SG", "HK", "NO", "KR", "TR", "IN", "BR", "ZA",
-    "NG", "RU", "KP", "IR", "SY", "CU", "VE", "MM", "BY", "LY",
-])
-
 
 # ---------------------------------------------------------------------------
-# Output data structures
+# Output type
 # ---------------------------------------------------------------------------
 
 @dataclass
 class FraudDecision:
-    """Structured result returned by FraudDetectionPipeline.evaluate().
+    """The result you get back from FraudDetectionPipeline.evaluate().
 
     Attributes:
-        transaction_id: The unique identifier of the evaluated transaction.
+        transaction_id: ID of the transaction that was evaluated.
         decision: One of "approved", "flagged", or "blocked".
-        risk_score: Weighted risk score in the range [0.0, 100.0].
-        triggered_rules: List of rule IDs (e.g. ["R1", "R3"]) that fired.
-        audit_log: Full structured audit entry for compliance and tracing.
-        evaluated_at: ISO 8601 UTC timestamp of when the decision was made.
+        risk_score: Weighted score in [0.0, 100.0].
+        triggered_rules: Rule IDs that fired, e.g. ["R1", "R4"].
+        audit_log: Full audit entry — keep this for compliance records.
+        evaluated_at: ISO 8601 UTC timestamp of when the check ran.
     """
-
     transaction_id: str
     decision: str
     risk_score: float
@@ -89,11 +84,14 @@ class FraudDecision:
 
 
 # ---------------------------------------------------------------------------
-# Custom exceptions
+# Exceptions
 # ---------------------------------------------------------------------------
 
 class TransactionValidationError(ValueError):
-    """Raised when a transaction dictionary fails input validation."""
+    """Raised when a transaction dict fails input validation.
+
+    Subclasses ValueError so callers can catch either this or the base class.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -103,17 +101,21 @@ class TransactionValidationError(ValueError):
 class FraudDetectionPipeline:
     """Real-time fraud detection pipeline for payment transactions.
 
-    Evaluates each transaction against a configurable rule engine, computes
-    a weighted risk score, and returns a FraudDecision with a full audit log.
+    Runs each transaction through a configurable rule engine, computes a
+    weighted risk score, and returns a FraudDecision with a full audit log.
 
-    Rules implemented:
-        R1 — High Amount
-        R2 — Velocity Check
-        R3 — Geographic Anomaly
-        R4 — Unusual Hour
-        R5 — Merchant Category Risk
-        R6 — Repeated Amount
-        R7 — Currency Mismatch
+    The pipeline keeps per-user transaction history in memory so time-based
+    rules (velocity, repeated amount) work correctly. This history resets
+    when the process restarts — it is not persisted.
+
+    Rules:
+        R1 — High Amount        (transaction over $10k)
+        R2 — Velocity Check     (too many transactions in a short window)
+        R3 — Geographic Anomaly (transaction from a high-risk country)
+        R4 — Unusual Hour       (between 1am and 5am UTC)
+        R5 — Merchant Category  (high-risk MCC like gambling or crypto)
+        R6 — Repeated Amount    (same amount too many times recently)
+        R7 — Currency Mismatch  (doesn't match user's home currency)
 
     Example:
         pipeline = FraudDetectionPipeline(config={
@@ -121,13 +123,11 @@ class FraudDetectionPipeline:
             "high_risk_mcc": ["gambling", "crypto"],
             "rule_weights": {"R1": 30.0, "R2": 25.0, "R3": 40.0},
         })
-        decision = pipeline.evaluate(transaction)
+        result = pipeline.evaluate(transaction_dict)
+        print(result.decision, result.risk_score)
     """
 
-    # ------------------------------------------------------------------
-    # Class-level defaults — overridable via config at instantiation time
-    # ------------------------------------------------------------------
-
+    # Default weights — override any of these via the config dict.
     DEFAULT_RULE_WEIGHTS: dict[str, float] = {
         "R1": 30.0,   # High Amount
         "R2": 25.0,   # Velocity Check
@@ -145,27 +145,32 @@ class FraudDetectionPipeline:
     DEFAULT_HIGH_AMOUNT_THRESHOLD: float = 10_000.0
     DEFAULT_REPEATED_AMOUNT_WINDOW_SECONDS: int = 600   # 10 minutes
     DEFAULT_REPEATED_AMOUNT_MAX_COUNT: int = 3
-    DEFAULT_UNUSUAL_HOUR_START: int = 1    # 01:00 UTC (inclusive)
-    DEFAULT_UNUSUAL_HOUR_END: int = 5      # 05:00 UTC (exclusive)
+    DEFAULT_UNUSUAL_HOUR_START: int = 1    # 01:00 UTC inclusive
+    DEFAULT_UNUSUAL_HOUR_END: int = 5      # 05:00 UTC exclusive
 
-    # Decision thresholds
+    # Score thresholds
     FLAGGED_THRESHOLD: float = 40.0
     BLOCKED_THRESHOLD: float = 75.0
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        """Initialise the pipeline with an optional configuration dictionary.
+        """Set up the pipeline with optional config overrides.
+
+        All keys are optional — anything not provided falls back to the
+        class-level defaults above.
 
         Args:
-            config: Optional dictionary to override default settings. Supported keys:
-                - high_risk_countries (list[str]): ISO 3166-1 alpha-2 codes.
-                - high_risk_mcc (list[str]): Merchant category strings.
-                - rule_weights (dict[str, float]): Rule ID → weight mapping.
-                - velocity_window_seconds (int): Time window for velocity check.
-                - velocity_max_count (int): Max transactions before velocity fires.
-                - user_home_currency (dict[str, str]): user_id → ISO 4217 code.
-                - high_amount_threshold (float): Amount above which R1 fires.
-                - repeated_amount_window_seconds (int): Window for R6.
-                - repeated_amount_max_count (int): Max repeats before R6 fires.
+            config: Dict of settings. Supported keys:
+                high_risk_countries (list[str]): ISO 3166-1 alpha-2 codes.
+                high_risk_mcc (list[str]): Merchant category strings.
+                rule_weights (dict[str, float]): Rule ID to weight mapping.
+                    Only the keys you provide are overridden; the rest keep
+                    their defaults.
+                velocity_window_seconds (int): Window size for R2.
+                velocity_max_count (int): Max transactions before R2 fires.
+                user_home_currency (dict[str, str]): user_id to ISO 4217 code.
+                high_amount_threshold (float): Threshold for R1.
+                repeated_amount_window_seconds (int): Window size for R6.
+                repeated_amount_max_count (int): Max repeats before R6 fires.
         """
         cfg = config or {}
 
@@ -175,6 +180,8 @@ class FraudDetectionPipeline:
         self._high_risk_mcc: frozenset[str] = frozenset(
             c.lower() for c in cfg.get("high_risk_mcc", self.DEFAULT_HIGH_RISK_MCC)
         )
+        # Merge caller weights on top of defaults so you only need to specify
+        # the rules you want to change.
         self._rule_weights: dict[str, float] = {
             **self.DEFAULT_RULE_WEIGHTS,
             **cfg.get("rule_weights", {}),
@@ -196,8 +203,8 @@ class FraudDetectionPipeline:
             cfg.get("repeated_amount_max_count", self.DEFAULT_REPEATED_AMOUNT_MAX_COUNT)
         )
 
-        # In-memory transaction history: user_id → list of parsed transactions.
-        # Each entry is a dict with "timestamp" (datetime) and "amount" (float).
+        # Per-user history: user_id → list of {transaction_id, timestamp, amount}.
+        # Updated after evaluation so the current txn doesn't affect its own checks.
         self._history: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
         logger.info("FraudDetectionPipeline initialised (version=%s)", PIPELINE_VERSION)
@@ -207,36 +214,35 @@ class FraudDetectionPipeline:
     # ------------------------------------------------------------------
 
     def evaluate(self, transaction: dict[str, Any]) -> FraudDecision:
-        """Evaluate a single payment transaction for fraud risk.
+        """Evaluate a transaction and return a fraud decision.
 
-        Validates the transaction, runs all fraud rules, computes a weighted
-        risk score, determines the decision, and returns a FraudDecision.
+        Validates the input, runs all rules, computes the weighted risk score,
+        records the transaction in history, and returns a FraudDecision with
+        a full audit log.
 
         Args:
-            transaction: Dictionary representing a payment transaction.
-                Must contain all required fields (see module docstring).
+            transaction: A dict representing a payment transaction. Must
+                contain all required fields with the correct types.
 
         Returns:
-            A FraudDecision dataclass with decision, risk_score,
-            triggered_rules, audit_log, and evaluated_at.
+            A FraudDecision with decision, risk_score, triggered_rules,
+            audit_log, and evaluated_at.
 
         Raises:
-            TransactionValidationError: If the transaction is malformed,
-                has missing/wrong-type fields, a negative amount, or an
-                invalid/unparseable timestamp.
+            TransactionValidationError: If the transaction is malformed —
+                missing fields, wrong types, negative amount, invalid ISO
+                codes, or an unparseable timestamp.
         """
-        # Step 1 — Validate input
         self._validate_transaction(transaction)
 
-        # Step 2 — Parse timestamp once; reuse across rules
+        # Parse timestamp once and reuse across all rules.
         ts: datetime = self._parse_timestamp(transaction["timestamp"])
 
-        # Step 3 — Run all rules
         all_rule_ids = list(self._rule_weights.keys())
         triggered: list[str] = []
         rule_metadata: dict[str, Any] = {}
 
-        rule_methods = {
+        rule_methods: dict[str, Any] = {
             "R1": self._rule_high_amount,
             "R2": self._rule_velocity_check,
             "R3": self._rule_geographic_anomaly,
@@ -254,26 +260,22 @@ class FraudDetectionPipeline:
                 if meta:
                     rule_metadata[rule_id] = meta
             except Exception as exc:  # noqa: BLE001
-                # Rule-level errors are caught and logged; they do not
-                # propagate so a single broken rule cannot block evaluation.
+                # Catch per-rule so one broken rule doesn't kill the pipeline.
                 logger.warning(
-                    "Rule %s raised an unexpected error for txn %s: %s",
+                    "Rule %s failed on txn %s: %s",
                     rule_id,
                     transaction.get("transaction_id", "unknown"),
                     exc,
                     exc_info=True,
                 )
 
-        # Step 4 — Compute risk score
         risk_score = self._compute_risk_score(triggered)
-
-        # Step 5 — Determine decision
         decision = self._make_decision(risk_score)
 
-        # Step 6 — Update history (after evaluation to avoid self-influence)
+        # Record history after evaluation — the current txn must not count
+        # toward its own velocity or repeated-amount checks.
         self._record_transaction(transaction, ts)
 
-        # Step 7 — Build audit log
         evaluated_at = datetime.now(timezone.utc).isoformat()
         audit_log = self._build_audit_log(
             transaction=transaction,
@@ -297,9 +299,11 @@ class FraudDetectionPipeline:
     def clear_history(self, user_id: str | None = None) -> None:
         """Clear the in-memory transaction history.
 
+        Useful in tests or when resetting state between processing batches.
+
         Args:
-            user_id: If provided, clears history only for that user.
-                If None, clears history for all users.
+            user_id: Clear history for just this user. Pass None to clear
+                history for all users.
         """
         if user_id is not None:
             self._history.pop(user_id, None)
@@ -307,41 +311,45 @@ class FraudDetectionPipeline:
             self._history.clear()
 
     # ------------------------------------------------------------------
-    # Fraud rules — each returns (fired: bool, metadata: dict)
+    # Fraud rules
+    # Each returns (fired: bool, metadata: dict).
+    # fired=True → rule triggered, its weight is added to the risk score.
+    # metadata → goes into the audit log for context.
     # ------------------------------------------------------------------
 
     def _rule_high_amount(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R1 — Flag transactions above the configured high-amount threshold.
+        """R1 — Flag transactions above the configured amount threshold.
 
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime (unused here, kept for consistent signature).
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the amount and threshold.
+            Tuple of (fired, metadata). metadata has the amount and threshold.
         """
-        amount: float = float(txn["amount"])
+        amount = float(txn["amount"])
         fired = amount > self._high_amount_threshold
         return fired, {"amount": amount, "threshold": self._high_amount_threshold}
 
     def _rule_velocity_check(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R2 — Flag if the user has exceeded the velocity limit within the time window.
+        """R2 — Flag if the user has too many transactions in the recent window.
 
-        Counts completed transactions for the same user_id within the last
-        `velocity_window_seconds` seconds (not including the current transaction).
+        Counts transactions in the user's history that fall within the last
+        velocity_window_seconds. The current transaction is not included
+        because history is updated after evaluation.
 
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime of this transaction.
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the recent count and window.
+            Tuple of (fired, metadata). metadata has the count and window size.
         """
-        user_id: str = txn["user_id"]
+        user_id = txn["user_id"]
         window_start = ts.timestamp() - self._velocity_window
         recent = [
             t for t in self._history[user_id]
@@ -354,30 +362,38 @@ class FraudDetectionPipeline:
     def _rule_geographic_anomaly(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R3 — Block transactions originating from high-risk countries.
+        """R3 — Flag transactions from high-risk countries.
+
+        The country list is configurable at init time.
 
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime (unused here).
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the country code.
+            Tuple of (fired, metadata). metadata has the country code.
         """
-        country: str = txn["country_code"].upper()
+        country = txn["country_code"].upper()
         fired = country in self._high_risk_countries
-        return fired, {"country_code": country, "high_risk_countries": list(self._high_risk_countries)}
+        return fired, {
+            "country_code": country,
+            "high_risk_countries": sorted(self._high_risk_countries),
+        }
 
     def _rule_unusual_hour(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R4 — Flag transactions occurring between 01:00 and 05:00 UTC.
+        """R4 — Flag transactions between 01:00 and 05:00 UTC.
+
+        This window catches a lot of card-not-present fraud where stolen
+        credentials are used overnight.
 
         Args:
-            txn: Validated transaction dictionary.
+            txn: Validated transaction dict (unused here).
             ts: Parsed UTC datetime of the transaction.
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the UTC hour.
+            Tuple of (fired, metadata). metadata has the UTC hour.
         """
         utc_hour = ts.hour
         fired = self.DEFAULT_UNUSUAL_HOUR_START <= utc_hour < self.DEFAULT_UNUSUAL_HOUR_END
@@ -388,34 +404,37 @@ class FraudDetectionPipeline:
     ) -> tuple[bool, dict[str, Any]]:
         """R5 — Flag transactions in high-risk merchant categories.
 
+        The MCC list is configurable. Comparison is case-insensitive.
+
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime (unused here).
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the MCC string.
+            Tuple of (fired, metadata). metadata has the merchant category.
         """
-        mcc: str = txn["merchant_category"].lower()
+        mcc = txn["merchant_category"].lower()
         fired = mcc in self._high_risk_mcc
         return fired, {"merchant_category": mcc}
 
     def _rule_repeated_amount(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R6 — Flag if the same amount appears more than the allowed count in the window.
+        """R6 — Flag if the same amount appears too many times in the window.
 
-        Checks the user's transaction history for the same amount within the
-        last `repeated_amount_window_seconds` seconds.
+        Looks back through the user's history for the same exact amount
+        within the last repeated_amount_window_seconds. Catches structuring
+        attacks and card-testing patterns.
 
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime of this transaction.
 
         Returns:
-            Tuple of (fired, metadata). metadata contains the repeat count.
+            Tuple of (fired, metadata). metadata has the repeat count.
         """
-        user_id: str = txn["user_id"]
-        amount: float = float(txn["amount"])
+        user_id = txn["user_id"]
+        amount = float(txn["amount"])
         window_start = ts.timestamp() - self._repeated_amount_window
 
         repeat_count = sum(
@@ -433,24 +452,25 @@ class FraudDetectionPipeline:
     def _rule_currency_mismatch(
         self, txn: dict[str, Any], ts: datetime
     ) -> tuple[bool, dict[str, Any]]:
-        """R7 — Flag if the transaction currency does not match the user's home currency.
+        """R7 — Flag if the transaction currency doesn't match the user's home currency.
 
-        Only fires if the user's home currency is configured. If no home currency
-        is configured for the user, the rule does not fire.
+        Only fires when a home currency is configured for this user. If we
+        don't have one on file, we skip the check rather than flagging
+        everything — noise kills the usefulness of a fraud signal.
 
         Args:
-            txn: Validated transaction dictionary.
-            ts: Parsed UTC datetime of the transaction.
+            txn: Validated transaction dict.
+            ts: Parsed UTC datetime (unused here).
 
         Returns:
-            Tuple of (fired, metadata). metadata contains both currencies.
+            Tuple of (fired, metadata). metadata has both currencies.
         """
-        user_id: str = txn["user_id"]
-        txn_currency: str = txn["currency"].upper()
+        user_id = txn["user_id"]
+        txn_currency = txn["currency"].upper()
         home_currency: str | None = self._user_home_currency.get(user_id)
 
         if home_currency is None:
-            return False, {"note": "no home currency configured for user"}
+            return False, {"note": "no home currency on file for this user"}
 
         fired = txn_currency != home_currency.upper()
         return fired, {
@@ -459,31 +479,29 @@ class FraudDetectionPipeline:
         }
 
     # ------------------------------------------------------------------
-    # Scoring and decision logic
+    # Scoring
     # ------------------------------------------------------------------
 
     def _compute_risk_score(self, triggered_rules: list[str]) -> float:
-        """Compute a weighted risk score from the list of triggered rule IDs.
+        """Sum the weights of all triggered rules and cap at 100.
 
         Args:
-            triggered_rules: List of rule IDs that fired during evaluation.
+            triggered_rules: List of rule IDs that fired.
 
         Returns:
-            A float in [0.0, 100.0] representing the aggregate risk score.
+            A float in [0.0, 100.0].
         """
-        raw_score = sum(
-            self._rule_weights.get(rule_id, 0.0) for rule_id in triggered_rules
-        )
-        return min(raw_score, 100.0)
+        raw = sum(self._rule_weights.get(r, 0.0) for r in triggered_rules)
+        return min(raw, 100.0)
 
     def _make_decision(self, risk_score: float) -> str:
         """Map a risk score to a decision string.
 
         Args:
-            risk_score: Computed risk score in [0.0, 100.0].
+            risk_score: Score from 0.0 to 100.0.
 
         Returns:
-            One of "approved", "flagged", or "blocked".
+            "blocked" if score >= 75, "flagged" if >= 40, "approved" otherwise.
         """
         if risk_score >= self.BLOCKED_THRESHOLD:
             return "blocked"
@@ -505,19 +523,19 @@ class FraudDetectionPipeline:
         evaluated_at: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
-        """Build a structured audit log entry for a transaction decision.
+        """Build the audit log entry for a transaction decision.
 
         Args:
-            transaction: The original transaction dictionary.
-            all_rule_ids: All rule IDs that were evaluated.
-            triggered_rules: Rule IDs that fired.
-            risk_score: Final computed risk score.
+            transaction: The original transaction dict.
+            all_rule_ids: Every rule that was evaluated (not just the ones that fired).
+            triggered_rules: Only the rules that fired.
+            risk_score: Final computed score.
             decision: Final decision string.
             evaluated_at: ISO 8601 timestamp of evaluation.
             metadata: Per-rule context collected during evaluation.
 
         Returns:
-            A dictionary conforming to the audit log schema defined in the prompt.
+            A dict with all required audit log fields.
         """
         return {
             "pipeline_version": PIPELINE_VERSION,
@@ -541,106 +559,100 @@ class FraudDetectionPipeline:
         }
 
     # ------------------------------------------------------------------
-    # Validation helpers
+    # Validation
     # ------------------------------------------------------------------
 
     def _validate_transaction(self, txn: dict[str, Any]) -> None:
-        """Validate a transaction dictionary against all input constraints.
+        """Check that a transaction dict is well-formed before running rules.
 
         Args:
-            txn: The transaction dictionary to validate.
+            txn: The transaction to validate.
 
         Raises:
-            TransactionValidationError: If any field is missing, has the wrong
-                type, has an invalid value, or if the timestamp is unparseable.
+            TransactionValidationError: If anything is wrong — missing field,
+                wrong type, negative amount, invalid ISO code, bad timestamp.
         """
         if not isinstance(txn, dict):
             raise TransactionValidationError(
-                f"Transaction must be a dict, got {type(txn).__name__}"
+                f"expected a dict, got {type(txn).__name__}"
             )
 
-        # Check required fields and types
         for field_name, expected_type in _REQUIRED_FIELDS.items():
             if field_name not in txn:
                 raise TransactionValidationError(
-                    f"Missing required field: '{field_name}'"
+                    f"missing required field: '{field_name}'"
                 )
-            value = txn[field_name]
-            if not isinstance(value, expected_type):
+            if not isinstance(txn[field_name], expected_type):
                 raise TransactionValidationError(
-                    f"Field '{field_name}' must be of type "
-                    f"{expected_type if isinstance(expected_type, type) else expected_type}, "
-                    f"got {type(value).__name__}"
+                    f"'{field_name}' should be {expected_type}, "
+                    f"got {type(txn[field_name]).__name__}"
                 )
 
-        # Amount must be positive
         amount = float(txn["amount"])
         if amount <= 0:
             raise TransactionValidationError(
-                f"Field 'amount' must be positive, got {amount}"
+                f"'amount' must be positive, got {amount}"
             )
 
-        # Currency must be a valid ISO 4217 code
         currency = txn["currency"].upper()
         if currency not in _VALID_CURRENCIES:
             raise TransactionValidationError(
-                f"Invalid ISO 4217 currency code: '{txn['currency']}'"
+                f"unrecognised currency code: '{txn['currency']}'"
             )
 
-        # Country code must be a valid ISO 3166-1 alpha-2 code
         country = txn["country_code"].upper()
         if len(country) != 2 or not country.isalpha():
             raise TransactionValidationError(
-                f"Invalid ISO 3166-1 alpha-2 country code: '{txn['country_code']}'"
+                f"invalid country code: '{txn['country_code']}' "
+                f"(expected ISO 3166-1 alpha-2, e.g. 'US')"
             )
 
-        # Timestamp must be parseable as ISO 8601
-        self._parse_timestamp(txn["timestamp"])
-
-        # transaction_id must be non-empty
         if not txn["transaction_id"].strip():
-            raise TransactionValidationError("Field 'transaction_id' must not be empty")
+            raise TransactionValidationError("'transaction_id' must not be empty")
 
-        # user_id must be non-empty
         if not txn["user_id"].strip():
-            raise TransactionValidationError("Field 'user_id' must not be empty")
+            raise TransactionValidationError("'user_id' must not be empty")
+
+        # Validate timestamp last — raises if unparseable.
+        self._parse_timestamp(txn["timestamp"])
 
     @staticmethod
     def _parse_timestamp(ts_str: str) -> datetime:
-        """Parse an ISO 8601 timestamp string into a timezone-aware datetime.
+        """Parse an ISO 8601 timestamp string into a UTC-aware datetime.
+
+        Handles the "Z" suffix that Python < 3.11 doesn't support natively
+        in fromisoformat().
 
         Args:
-            ts_str: ISO 8601 datetime string, e.g. "2024-06-01T14:32:00Z".
+            ts_str: Timestamp string, e.g. "2024-06-01T14:32:00Z".
 
         Returns:
-            A timezone-aware datetime object in UTC.
+            A timezone-aware datetime in UTC.
 
         Raises:
-            TransactionValidationError: If the string cannot be parsed as ISO 8601.
+            TransactionValidationError: If the string can't be parsed.
         """
-        # Normalise "Z" suffix to "+00:00" for Python < 3.11 compatibility
         normalised = ts_str.replace("Z", "+00:00")
         try:
             dt = datetime.fromisoformat(normalised)
         except (ValueError, TypeError) as exc:
             raise TransactionValidationError(
-                f"Invalid ISO 8601 timestamp: '{ts_str}'"
+                f"can't parse timestamp: '{ts_str}'"
             ) from exc
 
-        # Ensure timezone-aware; assume UTC if naive
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
 
     # ------------------------------------------------------------------
-    # History management
+    # History
     # ------------------------------------------------------------------
 
     def _record_transaction(self, txn: dict[str, Any], ts: datetime) -> None:
-        """Append a transaction to the in-memory history for its user.
+        """Add a transaction to the user's history after evaluation.
 
         Args:
-            txn: The validated transaction dictionary.
+            txn: The validated transaction dict.
             ts: Parsed UTC datetime of the transaction.
         """
         self._history[txn["user_id"]].append({
@@ -651,12 +663,10 @@ class FraudDetectionPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Demonstration — run directly to see the pipeline in action
+# Demo — run this file directly to see the pipeline in action
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import json
-
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     pipeline = FraudDetectionPipeline(config={
@@ -681,7 +691,7 @@ if __name__ == "__main__":
     })
 
     demo_transactions = [
-        # ── Transaction 1: Large amount + unusual hour → should be BLOCKED ──
+        # Large amount at 3am UTC — R1 + R4 fire → score 45 → flagged
         {
             "transaction_id": "txn-001",
             "user_id": "user_001",
@@ -689,23 +699,23 @@ if __name__ == "__main__":
             "currency": "USD",
             "merchant_category": "electronics",
             "country_code": "US",
-            "timestamp": "2024-06-01T03:15:00Z",   # 03:15 UTC — unusual hour
+            "timestamp": "2024-06-01T03:15:00Z",
             "payment_method": "card",
             "is_international": False,
         },
-        # ── Transaction 2: High-risk country → should be BLOCKED ──
+        # Transaction from Nigeria — R3 fires → score 40 → flagged
         {
             "transaction_id": "txn-002",
             "user_id": "user_002",
             "amount": 250.0,
             "currency": "GBP",
             "merchant_category": "grocery",
-            "country_code": "NG",   # high-risk country
+            "country_code": "NG",
             "timestamp": "2024-06-01T14:00:00Z",
             "payment_method": "wallet",
             "is_international": True,
         },
-        # ── Transaction 3: Normal transaction → should be APPROVED ──
+        # Completely normal transaction — nothing fires → approved
         {
             "transaction_id": "txn-003",
             "user_id": "user_003",
@@ -717,12 +727,13 @@ if __name__ == "__main__":
             "payment_method": "card",
             "is_international": False,
         },
-        # ── Transaction 4: Gambling MCC + currency mismatch → should be FLAGGED ──
+        # Gambling + wrong currency — R5 + R7 fire → score 30 → approved
+        # (shows that not every combination of rules crosses a threshold)
         {
             "transaction_id": "txn-004",
             "user_id": "user_001",
             "amount": 500.0,
-            "currency": "EUR",   # user_001 home currency is USD → mismatch
+            "currency": "EUR",   # user_001 home currency is USD
             "merchant_category": "gambling",
             "country_code": "US",
             "timestamp": "2024-06-01T15:00:00Z",
@@ -744,13 +755,13 @@ if __name__ == "__main__":
         print(f"Evaluated At: {result.evaluated_at}")
         print("-" * 40)
 
-    # ── Edge-case: demonstrate validation error ──────────────────────────────
+    # Show what happens with a bad input
     print("\n--- Validation Error Demo ---")
     try:
         pipeline.evaluate({
             "transaction_id": "txn-bad",
             "user_id": "user_001",
-            "amount": -50.0,   # negative amount
+            "amount": -50.0,   # negative — should raise
             "currency": "USD",
             "merchant_category": "grocery",
             "country_code": "US",
@@ -761,8 +772,8 @@ if __name__ == "__main__":
     except TransactionValidationError as e:
         print(f"Caught expected error: {e}")
 
-    # ── Edge-case: demonstrate velocity rule ─────────────────────────────────
-    print("\n--- Velocity Check Demo (6 rapid transactions) ---")
+    # Show the velocity rule kicking in after repeated transactions
+    print("\n--- Velocity Check Demo (6 transactions, same user, same timestamp) ---")
     velocity_pipeline = FraudDetectionPipeline(config={
         "velocity_max_count": 5,
         "velocity_window_seconds": 60,

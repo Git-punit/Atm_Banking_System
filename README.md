@@ -1,61 +1,50 @@
-# LLM Evaluation Repository — Real-Time Fraud Detection Pipeline
+# LLM Evaluation — Real-Time Fraud Detection Pipeline
 
-A structured benchmark for comparing LLM-generated code solutions against a golden reference implementation. The domain is **Fintech — Payment Transaction Fraud Detection**.
+This repo contains a coding prompt I wrote for a fintech fraud detection task, the golden reference implementation, and a structured comparison of how GPT-4o and Claude 3.5 Sonnet responded to it.
+
+The evaluation uses the **RLHF seven-dimension framework** (Correctness, Relevance, Completeness, Style & Presentation, Coherence, Helpfulness, Creativity), each scored 1–5.
 
 ---
 
-## Repository Structure
+## Files
 
 ```
-llm-eval-repo/
-├── prompt.md            # The domain-specific coding prompt given to LLMs
-├── justification.md     # Side-by-side evaluation framework and scoring rubric
-├── golden_response.py   # Production-quality reference implementation
-└── README.md            # This file
+├── prompt.md            — the coding challenge given to both LLMs
+├── golden_response.py   — the reference implementation
+├── justification.md     — side-by-side evaluation of GPT-4o vs Claude 3.5 Sonnet
+└── README.md            — this file
 ```
 
 ---
 
-## Project Overview
+## The prompt
 
-This repository contains everything needed to:
+The challenge asks for a `FraudDetectionPipeline` class in Python that:
 
-1. **Give a coding prompt to any LLM** (`prompt.md`) and collect its response
-2. **Score the response** against the golden solution using the structured rubric in `justification.md`
-3. **Compare two LLM responses** side-by-side to determine which better satisfies the prompt
+- Evaluates payment transactions against 7 configurable fraud rules (high amount, velocity, geographic anomaly, unusual hour, merchant category, repeated amount, currency mismatch)
+- Computes a weighted risk score (0–100) and maps it to `approved` / `flagged` / `blocked`
+- Returns a `FraudDecision` dataclass with a full audit log on every call
+- Accepts a `config` dict at init to override all defaults
+- Raises `ValueError` with descriptive messages on bad input
+- Catches rule-level exceptions internally so one broken rule can't kill the pipeline
+- Uses Google-style docstrings and type hints throughout
 
-### The Prompt Domain
-
-The prompt asks an LLM to implement a `FraudDetectionPipeline` class in Python that:
-
-- Evaluates payment transactions against **7 configurable fraud rules**
-- Computes a **weighted risk score** (0–100) and maps it to a decision (`approved` / `flagged` / `blocked`)
-- Returns a structured `FraudDecision` dataclass with a full **audit log**
-- Accepts a **config dictionary** at instantiation to override all defaults
-- Handles all **error cases** with descriptive `ValueError` exceptions
-- Follows **Google-style docstrings** and full type hints throughout
+No external dependencies — standard library only.
 
 ---
 
-## Running the Golden Response
+## Running the reference implementation
 
-### Prerequisites
-
-Python 3.10 or later. No third-party dependencies — the golden response uses only the standard library.
+Requires Python 3.10 or later.
 
 ```bash
-python --version   # must be 3.10+
-```
-
-### Run the demo
-
-```bash
-python golden_response.py
+python3 golden_response.py
 ```
 
 Expected output:
 
 ```
+INFO FraudDetectionPipeline initialised (version=1.0.0)
 ======================================================================
   Fraud Detection Pipeline v1.0.0 — Demo
 ======================================================================
@@ -64,7 +53,6 @@ Transaction : txn-001
 Decision    : FLAGGED
 Risk Score  : 45.0 / 100.0
 Rules Fired : ['R1', 'R4']
-Evaluated At: 2024-...
 
 Transaction : txn-002
 Decision    : FLAGGED
@@ -82,9 +70,9 @@ Risk Score  : 30.0 / 100.0
 Rules Fired : ['R5', 'R7']
 
 --- Validation Error Demo ---
-Caught expected error: Field 'amount' must be positive, got -50.0
+Caught expected error: 'amount' must be positive, got -50.0
 
---- Velocity Check Demo (6 rapid transactions) ---
+--- Velocity Check Demo (6 transactions, same user, same timestamp) ---
   txn 1: decision=approved, score=0, rules=[]
   txn 2: decision=approved, score=0, rules=[]
   txn 3: decision=approved, score=0, rules=[]
@@ -93,19 +81,19 @@ Caught expected error: Field 'amount' must be positive, got -50.0
   txn 6: decision=flagged, score=45.0, rules=['R2', 'R6']
 ```
 
-### Import as a module
+You can also import it directly:
 
 ```python
 from golden_response import FraudDetectionPipeline, FraudDecision
 
 pipeline = FraudDetectionPipeline(config={
     "high_risk_countries": ["NG", "RU"],
-    "user_home_currency": {"u1": "USD"},
+    "user_home_currency": {"alice": "USD"},
 })
 
-decision: FraudDecision = pipeline.evaluate({
+result = pipeline.evaluate({
     "transaction_id": "txn-xyz",
-    "user_id": "u1",
+    "user_id": "alice",
     "amount": 500.0,
     "currency": "USD",
     "merchant_category": "grocery",
@@ -115,83 +103,66 @@ decision: FraudDecision = pipeline.evaluate({
     "is_international": False,
 })
 
-print(decision.decision)      # "approved"
-print(decision.risk_score)    # 0.0
+print(result.decision)     # approved
+print(result.risk_score)   # 0.0
 ```
 
 ---
 
-## Evaluation Methodology
+## Evaluation results summary
 
-### Step 1 — Collect LLM Responses
+| Dimension | GPT-4o | Claude 3.5 Sonnet |
+|-----------|--------|-------------------|
+| Correctness | 4/5 | 4/5 |
+| Relevance | 5/5 | 5/5 |
+| Completeness | 4/5 | 4/5 |
+| Style & Presentation | 4/5 | 5/5 |
+| Coherence | 5/5 | 5/5 |
+| Helpfulness | 4/5 | 5/5 |
+| Creativity | 3/5 | 4/5 |
+| **Average** | **4.14 / 5** | **4.57 / 5** |
 
-Submit `prompt.md` verbatim to two different LLMs (e.g., GPT-4o and Claude 3.5 Sonnet). Save each response as `response_a.py` and `response_b.py`.
+**Winner: Claude 3.5 Sonnet**
 
-### Step 2 — Automated Constraint Checks
+Both models got one rule wrong — GPT-4o's velocity check (R2) ignored the time window, and Claude's currency mismatch (R7) flagged users with no home currency configured instead of skipping them. Claude's overall code quality was noticeably higher: better docstrings, `frozenset` for O(1) lookups, a `clear_history()` utility, and a more useful demo block.
 
-Run each response against the following automated checks:
-
-```bash
-# Check that the module imports cleanly
-python -c "import response_a"
-python -c "import response_b"
-
-# Run the demo block
-python response_a.py
-python response_b.py
-```
-
-Then manually verify each constraint from `prompt.md` using the checklist in `justification.md`.
-
-### Step 3 — Score Each Dimension
-
-Open `justification.md` and fill in the ✓/✗ cells for each dimension. Compute the weighted score using the formula at the bottom of the scoring table.
-
-### Step 4 — Write the Verdict
-
-Fill in the **Strengths and Weaknesses** sections and the **Final Verdict** narrative in `justification.md`.
-
-### Scoring Dimensions
-
-| Dimension | Weight | What It Measures |
-|-----------|--------|-----------------|
-| Rule Engine Completeness | 25% | Are all 5+ rules implemented correctly as independent methods? |
-| Decision Output Structure | 15% | Does `FraudDecision` have all 6 required fields with correct types? |
-| Risk Scoring Model | 20% | Is the weighted score correct, capped, and mapped to the right thresholds? |
-| Audit Log Completeness | 15% | Does the audit log contain all required fields including `metadata`? |
-| Configuration Flexibility | 10% | Can all config keys be overridden at instantiation? |
-| Error Handling | 10% | Are all error cases caught with descriptive `ValueError` messages? |
-| Code Quality & Formatting | 5% | Docstrings, type hints, no global state, clean `__main__` block? |
+Full analysis is in `justification.md`.
 
 ---
 
-## Key Design Decisions in the Golden Response
+## Bugs found in each response
 
-| Decision | Rationale |
-|----------|-----------|
-| `defaultdict(list)` for history | Avoids `KeyError` on first access per user; no global state |
-| Rule errors caught per-rule | A broken rule must not block the entire evaluation pipeline |
-| History updated **after** evaluation | Prevents the current transaction from influencing its own velocity/repeat checks |
-| `frozenset` for config lists | O(1) membership tests; immutable after construction |
-| `TransactionValidationError(ValueError)` | Subclasses `ValueError` so callers can catch either |
-| Timestamp normalisation (`Z` → `+00:00`) | Ensures Python < 3.11 compatibility without third-party libs |
-| `min(raw_score, 100.0)` cap | Prevents score overflow when multiple high-weight rules fire simultaneously |
+| Bug | GPT-4o | Claude 3.5 Sonnet |
+|-----|--------|-------------------|
+| R2 velocity check filters by time window | ✗ counts all history | ✓ correct |
+| R7 skips users with no home currency | ✓ correct | ✗ flags them instead |
+| Score capped at 100.0 | ✓ | ✓ |
+| History updated after evaluation | ✓ | ✓ |
+| Rule exceptions caught per-rule | ✓ | ✓ |
 
 ---
 
-## Extending the Pipeline
+## Key design decisions in the golden response
 
-To add a new rule:
+**History updated after evaluation** — if you update history before running the rules, the current transaction counts toward its own velocity and repeated-amount checks. That's wrong.
 
-1. Add a method `_rule_<name>(self, txn, ts) -> tuple[bool, dict]` following the existing pattern
-2. Add the rule ID and default weight to `DEFAULT_RULE_WEIGHTS`
-3. Register the method in the `rule_methods` dict inside `evaluate()`
+**Rule errors caught per-rule** — one broken rule shouldn't stop the whole pipeline. In payments, failing open is usually safer than failing closed.
 
-No other changes are required.
+**`frozenset` for country/MCC lists** — O(1) membership checks, immutable after init.
+
+**R7 skips unconfigured users** — flagging every transaction from users not in the home currency map would generate too much noise to be useful.
+
+**`TransactionValidationError(ValueError)`** — subclasses `ValueError` so callers can catch either.
+
+**"Z" → "+00:00" normalisation** — `fromisoformat()` didn't handle the "Z" suffix until Python 3.11.
 
 ---
 
-## License
+## How to run your own evaluation
 
-This repository is provided for LLM evaluation and benchmarking purposes.
-# Atm_Banking_System
+1. Copy the contents of `prompt.md` and paste it into any LLM
+2. Save the response as `response.py`
+3. Run it: `python3 response.py`
+4. Check it imports cleanly: `python3 -c "import response"`
+5. Score it against the seven dimensions in `justification.md`
+6. Compare your scores to the GPT-4o and Claude 3.5 Sonnet results

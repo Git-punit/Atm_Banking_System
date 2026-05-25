@@ -1,132 +1,147 @@
-# Domain-Specific Coding Prompt: Fintech — Real-Time Fraud Detection Pipeline
-
-## Domain
-**Financial Technology (Fintech) — Transaction Fraud Detection**
-
----
+# Coding Challenge: Build a Real-Time Fraud Detection Pipeline
 
 ## Background
 
-You are a backend engineer at a mid-sized digital payments company. The risk team has asked you to build a **real-time fraud detection pipeline** that evaluates incoming payment transactions and flags suspicious ones before they are settled.
+I'm on the risk engineering team at a payments company. We process a few million transactions a day and our fraud checks are currently scattered across three different services — it's hard to maintain and even harder to extend. I'm consolidating the core detection logic into a single, well-structured Python module that the rest of the team can understand and build on without needing to ask me every time.
 
-The system must be self-contained, production-oriented, and written entirely in **Python**. It will be integrated into a larger microservices architecture later, but for now it must run as a standalone module with a clean public API.
-
----
-
-## Task
-
-Implement a `FraudDetectionPipeline` class in Python that:
-
-1. Accepts a stream of payment transactions (as dictionaries or dataclass instances)
-2. Runs each transaction through a configurable set of fraud-detection rules
-3. Returns a structured result indicating whether the transaction is approved, flagged, or blocked
-4. Maintains an in-memory transaction history per user to support velocity and pattern checks
-5. Produces a structured audit log entry for every decision made
+This is the prompt I'd give to a new backend engineer joining the team. It's realistic, it has real constraints, and there's no hand-holding.
 
 ---
 
-## Input Format
+## What you need to build
 
-Each transaction is a dictionary with the following fields:
+Write a `FraudDetectionPipeline` class in Python. The class takes in payment transactions one at a time, runs them through a set of fraud rules, and tells you whether to approve, flag, or block the transaction.
+
+It needs to be a standalone Python file — no external dependencies, just the standard library. We'll wire it into our actual services later, but for now it just needs to work on its own.
+
+Here's what the class needs to do:
+
+- Accept a transaction as a plain dictionary
+- Run it through a configurable set of fraud detection rules
+- Return a structured decision object every time
+- Keep a per-user transaction history in memory so rules like velocity checks actually work
+- Write an audit log entry for every decision — compliance requires it
+
+---
+
+## Transaction format
+
+Every transaction coming in looks like this:
 
 ```python
 {
-    "transaction_id": str,        # UUID string, unique per transaction
-    "user_id": str,               # Unique user identifier
-    "amount": float,              # Transaction amount in USD (positive)
-    "currency": str,              # ISO 4217 currency code, e.g. "USD"
-    "merchant_category": str,     # MCC string, e.g. "grocery", "electronics", "travel"
-    "country_code": str,          # ISO 3166-1 alpha-2, e.g. "US", "NG", "RU"
-    "timestamp": str,             # ISO 8601 datetime string, e.g. "2024-06-01T14:32:00Z"
-    "payment_method": str,        # "card", "wallet", "bank_transfer"
-    "is_international": bool,     # True if cross-border transaction
+    "transaction_id": str,      # unique ID, usually a UUID
+    "user_id": str,             # who made the transaction
+    "amount": float,            # in USD, always positive
+    "currency": str,            # ISO 4217, e.g. "USD", "GBP"
+    "merchant_category": str,   # e.g. "grocery", "electronics", "gambling"
+    "country_code": str,        # ISO 3166-1 alpha-2, e.g. "US", "NG"
+    "timestamp": str,           # ISO 8601, e.g. "2024-06-01T14:32:00Z"
+    "payment_method": str,      # "card", "wallet", or "bank_transfer"
+    "is_international": bool,   # True if it crossed a border
 }
 ```
 
 ---
 
-## Constraints
+## The fraud rules
 
-### Constraint 1 — Rule Engine (Mandatory)
-Implement **at least five** of the following fraud rules. Each rule must be a separate, independently callable method:
+Implement **at least five** of these. Each rule must be its own method — don't dump everything into one big function.
 
-| Rule ID | Rule Name              | Description                                                                 |
-|---------|------------------------|-----------------------------------------------------------------------------|
-| R1      | High Amount            | Flag transactions above $10,000                                             |
-| R2      | Velocity Check         | Flag if user has made more than 5 transactions in the last 60 seconds       |
-| R3      | Geographic Anomaly     | Block if transaction originates from a high-risk country (configurable list)|
-| R4      | Unusual Hour           | Flag transactions between 01:00–05:00 UTC                                   |
-| R5      | Merchant Category Risk | Flag transactions in high-risk MCC categories (e.g., "gambling", "crypto")  |
-| R6      | Repeated Amount        | Flag if the same amount appears more than 3 times in the last 10 minutes    |
-| R7      | Currency Mismatch      | Flag if currency does not match the user's home currency (configurable)      |
+| ID | Name | What it checks |
+|----|------|----------------|
+| R1 | High Amount | Amount over $10,000 |
+| R2 | Velocity Check | More than 5 transactions from the same user in the last 60 seconds |
+| R3 | Geographic Anomaly | Transaction from a high-risk country (list is configurable) |
+| R4 | Unusual Hour | Transaction between 1am and 5am UTC |
+| R5 | Merchant Category Risk | High-risk MCC like "gambling" or "crypto" (list is configurable) |
+| R6 | Repeated Amount | Same exact amount more than 3 times in the last 10 minutes |
+| R7 | Currency Mismatch | Currency doesn't match the user's home currency (configurable per user) |
 
-### Constraint 2 — Decision Output (Mandatory)
-Every call to `evaluate(transaction)` must return a `FraudDecision` object (dataclass or TypedDict) with **exactly** these fields:
+---
+
+## What `evaluate()` must return
+
+Every call to `evaluate(transaction)` must return a `FraudDecision` — either a dataclass or TypedDict, your choice. It needs exactly these fields:
 
 ```python
 {
     "transaction_id": str,
-    "decision": str,           # "approved" | "flagged" | "blocked"
-    "risk_score": float,       # 0.0 – 100.0
-    "triggered_rules": list[str],   # list of rule IDs that fired
-    "audit_log": dict,         # structured audit entry (see Constraint 4)
-    "evaluated_at": str,       # ISO 8601 timestamp of evaluation
+    "decision": str,              # "approved", "flagged", or "blocked"
+    "risk_score": float,          # between 0.0 and 100.0
+    "triggered_rules": list[str], # e.g. ["R1", "R4"]
+    "audit_log": dict,            # see the audit log section below
+    "evaluated_at": str,          # ISO 8601 UTC timestamp of when the check ran
 }
 ```
 
-### Constraint 3 — Risk Scoring (Mandatory)
-Compute a `risk_score` between 0.0 and 100.0 using a **weighted scoring model**:
+---
 
-- Each rule that fires contributes a configurable weight to the score
-- Default weights must be defined as a class-level constant
-- Score must be capped at 100.0
-- Decision thresholds:
-  - `risk_score < 40`  → `"approved"`
-  - `40 ≤ risk_score < 75` → `"flagged"`
-  - `risk_score ≥ 75` → `"blocked"`
+## Risk scoring
 
-### Constraint 4 — Audit Log (Mandatory)
-The `audit_log` field in every decision must be a dictionary containing:
+Don't just count rules — use a weighted model. Each rule that fires adds its weight to the score. The weights must be defined as a class-level constant so they're easy to find and change. Cap the score at 100.0.
+
+Decision thresholds:
+- Score under 40 → `"approved"`
+- Score 40 to 74 → `"flagged"`
+- Score 75 and above → `"blocked"`
+
+---
+
+## Audit log
+
+The `audit_log` field inside every decision must be a dict containing at least:
 
 ```python
 {
     "pipeline_version": str,
-    "rules_evaluated": list[str],   # all rules that were checked
-    "rules_triggered": list[str],   # rules that fired
+    "rules_evaluated": list[str],  # every rule that ran
+    "rules_triggered": list[str],  # only the ones that fired
     "risk_score": float,
     "decision": str,
     "user_id": str,
     "transaction_id": str,
     "timestamp": str,
-    "metadata": dict,               # any extra context (e.g., velocity count, country)
+    "metadata": dict,              # extra context — velocity count, country, etc.
 }
 ```
 
-### Constraint 5 — Configuration (Mandatory)
-The pipeline must accept a `config` dictionary at instantiation time that allows overriding:
+---
 
-- `high_risk_countries`: list of ISO country codes
-- `high_risk_mcc`: list of merchant category strings
-- `rule_weights`: dict mapping rule ID → float weight
-- `velocity_window_seconds`: int (default 60)
-- `velocity_max_count`: int (default 5)
-- `user_home_currency`: dict mapping user_id → currency code
+## Configuration
 
-### Constraint 6 — Error Handling (Mandatory)
-- Raise a `ValueError` with a descriptive message for any malformed transaction (missing fields, wrong types, negative amount, invalid ISO codes)
-- Never raise unhandled exceptions during rule evaluation — catch and log rule-level errors internally
-- Invalid timestamps must raise `ValueError`, not silently pass
+The pipeline must accept a `config` dict when you create it. These keys need to be overridable:
 
-### Constraint 7 — Formatting & Code Quality (Mandatory)
-- All public methods must have **Google-style docstrings**
-- Type hints on every function signature
-- No global mutable state
-- The class must be importable and usable without side effects on import
-- Include a `if __name__ == "__main__":` block with at least 3 demonstration transactions
+- `high_risk_countries` — list of ISO 3166-1 alpha-2 country codes
+- `high_risk_mcc` — list of merchant category strings
+- `rule_weights` — dict of rule ID to weight (only override what you need)
+- `velocity_window_seconds` — default 60
+- `velocity_max_count` — default 5
+- `user_home_currency` — dict of user_id to ISO 4217 currency code
+
+If a key isn't provided, fall back to sensible defaults.
 
 ---
 
-## Expected Usage
+## Error handling
+
+- If a transaction is missing a field, has the wrong type, has a negative amount, or has an invalid ISO code — raise a `ValueError` with a message that actually explains what's wrong
+- If a rule itself throws an exception during evaluation, catch it, log a warning, and keep going. One broken rule shouldn't take down the whole pipeline
+- Bad timestamps must raise `ValueError`, not silently produce garbage
+
+---
+
+## Code quality requirements
+
+- Google-style docstrings on every public method
+- Type hints on every function signature
+- No global mutable state — the class must be safe to instantiate multiple times
+- The file must be importable without any side effects
+- Include a `if __name__ == "__main__":` block that demonstrates at least 3 different transactions (one approved, one flagged, one that hits a validation error)
+
+---
+
+## Example usage
 
 ```python
 pipeline = FraudDetectionPipeline(config={
@@ -153,27 +168,26 @@ decision = pipeline.evaluate({
     "is_international": False,
 })
 
-print(decision)
-# FraudDecision(decision='blocked', risk_score=45.0, triggered_rules=['R1', 'R4'], ...)
+print(decision.decision)         # "flagged"
+print(decision.risk_score)       # 45.0
+print(decision.triggered_rules)  # ["R1", "R4"]
 ```
 
 ---
 
-## Evaluation Criteria
+## Grading
 
-Your solution will be assessed on:
-
-| Criterion                        | Weight |
-|----------------------------------|--------|
-| All 5+ rules correctly implemented | 25%  |
-| Correct risk scoring & thresholds  | 20%  |
-| Proper error handling              | 15%  |
-| Audit log completeness             | 15%  |
-| Code quality & docstrings          | 15%  |
-| Configuration flexibility          | 10%  |
+| What I'm looking at | Weight |
+|---------------------|--------|
+| Rules implemented correctly and independently | 25% |
+| Risk scoring and thresholds | 20% |
+| Error handling | 15% |
+| Audit log completeness | 15% |
+| Code quality and docstrings | 15% |
+| Config flexibility | 10% |
 
 ---
 
 ## Deliverable
 
-A single Python file `fraud_detection.py` that can be run directly and imported as a module.
+One Python file called `fraud_detection.py`. It should run directly and also be importable as a module with no side effects.
