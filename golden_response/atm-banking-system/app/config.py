@@ -1,4 +1,7 @@
-
+"""
+Central application configuration loaded from environment variables.
+All settings are validated by Pydantic at startup.
+"""
 from functools import lru_cache
 from typing import Literal
 
@@ -14,26 +17,26 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # app basics
+    # ── Application ──────────────────────────────────────────────────────────
     app_name: str = "ATM Banking System"
     app_env: Literal["development", "production", "testing"] = "development"
     debug: bool = False
     secret_key: str = Field(default="dev-secret-key-change-in-production")
     algorithm: str = "HS256"
 
-    # tokens / sessions
+    # ── Session / Token ──────────────────────────────────────────────────────
     access_token_expire_minutes: int = 2          # generous upper bound
     session_inactivity_seconds: int = 90          # real ATM timeout
 
-    # database
+    # ── Database ─────────────────────────────────────────────────────────────
     database_url: str = "sqlite:///./atm_banking.db"
 
-    # security
+    # ── Security ─────────────────────────────────────────────────────────────
     pin_hash_algorithm: Literal["argon2", "bcrypt"] = "argon2"
     max_pin_attempts: int = 3
     card_number_encryption_key: str = Field(default="")
 
-    # atm behaviour defaults
+    # ── ATM Defaults ─────────────────────────────────────────────────────────
     default_denomination: int = 20
     low_cash_threshold: int = 5000
     default_daily_withdrawal_limit: float = 1000.0
@@ -42,13 +45,13 @@ class Settings(BaseSettings):
     max_single_deposit: float = 10000.0
     deposit_hold_days: int = 1
 
-    # rate limiting
+    # ── Rate Limiting ─────────────────────────────────────────────────────────
     rate_limit_per_minute: int = 60
 
-    # admin
+    # ── Admin ─────────────────────────────────────────────────────────────────
     admin_secret_key: str = Field(default="dev-admin-secret-key")
 
-    # logging
+    # ── Logging ───────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "console"
 
