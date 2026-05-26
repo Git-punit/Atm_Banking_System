@@ -1,16 +1,16 @@
-#ATM Banking System
+# ATM Banking System
 
-##1. Role
+## 1. Role
 You are a senior Python backend engineer. You build robust, high-concurrency systems for the financial sector. Your code is clean, pragmatic, and designed for real-world constraints.
 
-##2. Context
+## 2. Context
 This is the backend for a bank's ATM network. Hundreds of physical terminals, one central server, real cash constraints. I built it at a fintech company and the spec came from an actual bank, so the edge cases are real not hypothetical.
 
 Most ATM backends treat concurrency as someone else's problem. Two terminals hit the same account at once and you either get a race condition or a deadlock. A cassette runs dry and the system doesn't know until a customer gets an empty dispense. Sessions don't actually die they just stop being checked.
 
 This system treats those as first-class problems. The withdrawal endpoint holds a SELECT FOR UPDATE on the cassette row. Sessions expire at 90 seconds of inactivity and the check runs on every request, not in a background job. Card locks write to the database immediately and survive server restarts which sounds obvious, but I've seen three production systems where the lock lived in Redis with a TTL.
 
- ##3. Task
+ ## 3. Task
 Your task is to build the complete, production-ready API backend for this ATM system. You need to implement the database schema, core banking logic, API endpoints, authentication flows, and administrative controls.
 
 ## Why This Exists
