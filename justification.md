@@ -1,7 +1,7 @@
 
 ## Final Verdict
 
-**Winner: Response B** (4.57 vs 4.14)
+**Winner: Response B** 
 
 Response B is the stronger one overall. The code quality is noticeably better — complete docstrings on private methods, `frozenset` for lookups, a `clear_history()` utility, and a module docstring that explains design decisions rather than just describing the file. The `__main__` block is more useful, covering more scenarios including a velocity demo loop. The velocity check (R2) is implemented correctly with proper time-window filtering, which is the trickier of the two rules to get right.
 

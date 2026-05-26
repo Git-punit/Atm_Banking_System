@@ -49,7 +49,7 @@ SQLite works fine for local dev and test runs. PostgreSQL is what you want in pr
 You'll need Python 3.11+ and either PostgreSQL or SQLite.
 
 ```bash
-git clone https://github.com/your-org/atm-banking-system.git
+git clone https://github.com/Git-punit/atm-banking-system.git
 cd atm-banking-system
 
 python -m venv venv
