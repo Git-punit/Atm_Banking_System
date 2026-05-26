@@ -1,21 +1,4 @@
-"""
-Admin control panel router.
 
-All endpoints require a valid admin JWT.
-Role-sensitive operations require superadmin or admin role.
-
-Endpoints:
-  POST /admin/accounts/create          — create account
-  PUT  /admin/accounts/{id}/freeze     — freeze account
-  PUT  /admin/accounts/{id}/unfreeze   — unfreeze account
-  GET  /admin/accounts                 — list/search accounts
-  POST /admin/cards/block              — block a card
-  POST /admin/cards/unblock            — unblock a card
-  GET  /admin/reports/transactions     — transaction volume report
-  GET  /admin/reports/failed-logins    — failed login summary
-  GET  /admin/reports/suspicious       — suspicious activity alerts
-  POST /admin/users/create             — create admin user (superadmin only)
-"""
 import math
 from datetime import datetime
 from typing import Annotated, List, Optional
@@ -46,8 +29,6 @@ from app.services.transaction_service import export_transactions_csv
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-
-# ── Account management ────────────────────────────────────────────────────────
 
 @router.post(
     "/accounts/create",
@@ -184,8 +165,6 @@ def unfreeze_account(
         raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
 
 
-# ── Card management ───────────────────────────────────────────────────────────
-
 @router.post(
     "/cards/block",
     status_code=status.HTTP_200_OK,
@@ -227,8 +206,6 @@ def unblock_card(
         db.rollback()
         raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
 
-
-# ── Reports ───────────────────────────────────────────────────────────────────
 
 @router.get(
     "/reports/transactions",
@@ -333,8 +310,6 @@ def suspicious_activity(
         for log in logs
     ]
 
-
-# ── Admin user management ─────────────────────────────────────────────────────
 
 @router.post(
     "/users/create",

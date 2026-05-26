@@ -1,9 +1,4 @@
-"""
-Custom exception hierarchy for the ATM Banking System.
 
-Each domain error has its own class so callers can catch specific
-failure modes without parsing error messages.
-"""
 from typing import Optional
 
 
@@ -25,7 +20,7 @@ class ATMBaseException(Exception):
         }
 
 
-# ── Authentication / Card errors ──────────────────────────────────────────────
+# --- card / auth errors ---
 
 class InvalidCardNumberError(ATMBaseException):
     http_status = 400
@@ -84,7 +79,7 @@ class UnauthorizedError(ATMBaseException):
     error_code = "UNAUTHORIZED"
 
 
-# ── Account errors ────────────────────────────────────────────────────────────
+# --- account errors ---
 
 class AccountNotFoundError(ATMBaseException):
     http_status = 404
@@ -106,7 +101,7 @@ class KYCNotVerifiedError(ATMBaseException):
     error_code = "KYC_NOT_VERIFIED"
 
 
-# ── Transaction errors ────────────────────────────────────────────────────────
+# --- transaction errors ---
 
 class InsufficientFundsError(ATMBaseException):
     http_status = 422
@@ -144,7 +139,7 @@ class TransferRollbackError(ATMBaseException):
     error_code = "TRANSFER_ROLLBACK"
 
 
-# ── ATM errors ────────────────────────────────────────────────────────────────
+# --- ATM hardware/status errors ---
 
 class ATMNotFoundError(ATMBaseException):
     http_status = 404
@@ -167,7 +162,7 @@ class InsufficientATMCashError(ATMBaseException):
     error_code = "INSUFFICIENT_ATM_CASH"
 
 
-# ── Admin errors ──────────────────────────────────────────────────────────────
+# --- admin errors ---
 
 class AdminNotFoundError(ATMBaseException):
     http_status = 404
@@ -184,7 +179,7 @@ class InsufficientPermissionsError(ATMBaseException):
     error_code = "INSUFFICIENT_PERMISSIONS"
 
 
-# ── Database / System errors ──────────────────────────────────────────────────
+# --- infrastructure errors ---
 
 class DatabaseError(ATMBaseException):
     http_status = 500

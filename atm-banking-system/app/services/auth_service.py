@@ -1,15 +1,5 @@
-"""
-Authentication service.
-
-Handles the full ATM login/logout lifecycle:
-  1. Validate card number (Luhn)
-  2. Look up card and check status
-  3. Verify PIN (hashed)
-  4. Enforce lockout after MAX_PIN_ATTEMPTS failures
-  5. Prevent concurrent sessions
-  6. Issue JWT + persist session row
-  7. Logout / forced session invalidation
-"""
+# auth_service.py
+# Handles the ATM login / logout lifecycle.
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -46,7 +36,7 @@ from app.services.audit_service import log_event
 settings = get_settings()
 
 
-# ── Login ─────────────────────────────────────────────────────────────────────
+# Login logic
 
 def login(
     db: Session,
@@ -61,18 +51,18 @@ def login(
     Returns a dict with token, session metadata, and account info.
     Raises a specific ATMBaseException subclass on any failure.
     """
-    # 1. Luhn validation (belt-and-suspenders; schema also validates)
+    # belt-and-suspenders; the schema also validates
     if not is_valid_card_number(card_number):
         raise InvalidCardNumberError("Card number failed Luhn validation")
 
-    # 2. Fetch ATM terminal
+    # fetch the ATM terminal first so we can fail fast if it doesn't exist
     atm = db.query(ATMTerminal).filter(ATMTerminal.id == atm_id).first()
     if not atm:
         raise ATMNotFoundError(f"ATM {atm_id} not found")
     if not atm.is_operational:
         raise ATMOfflineError(f"ATM {atm.atm_code} is currently {atm.terminal_status}")
 
-    # 3. Fetch card
+    # look up the card
     card = db.query(Card).filter(Card.card_number == card_number).first()
     masked = mask_card_number(card_number)
 
@@ -89,7 +79,7 @@ def login(
 
     masked_acc = mask_account_number(card.account.account_number) if card.account else None
 
-    # 4. Card status checks
+    # card status checks
     if card.lost_or_stolen_flag:
         log_event(db, "login_failed", masked_card_ref=masked, atm_id=atm_id,
                   description="Lost/stolen card used", severity="critical")
@@ -105,7 +95,7 @@ def login(
                   description="Expired card used", severity="warning")
         raise CardExpiredError("This card has expired")
 
-    # 5. Lockout check (persists across restarts)
+    # lockout check — persists across restarts via the DB counter
     if card.failed_attempt_count >= settings.max_pin_attempts:
         log_event(db, "login_failed", masked_card_ref=masked, atm_id=atm_id,
                   description="Locked card used", severity="warning")
@@ -114,7 +104,7 @@ def login(
             "Please contact your bank."
         )
 
-    # 6. PIN verification
+    # verify PIN
     if not verify_pin(plain_pin, card.pin_hash):
         card.failed_attempt_count += 1
         remaining = settings.max_pin_attempts - card.failed_attempt_count
@@ -139,7 +129,7 @@ def login(
             f"Incorrect PIN. {remaining} attempt(s) remaining before card is locked."
         )
 
-    # 7. Prevent concurrent sessions
+    # don't allow two active sessions for the same card
     existing_session = (
         db.query(ATMSession)
         .filter(ATMSession.card_id == card.id, ATMSession.is_active == True)  # noqa: E712
@@ -160,11 +150,11 @@ def login(
         # Expired session — close it silently
         _close_session(db, existing_session, reason="timeout")
 
-    # 8. Reset failed attempts on successful auth
+    # successful auth — reset the failure counter
     card.failed_attempt_count = 0
     card.last_used_timestamp = datetime.now(timezone.utc)
 
-    # 9. Create session row
+    # create the session row
     jti = str(uuid.uuid4())
     session = ATMSession(
         card_id=card.id,
@@ -176,7 +166,7 @@ def login(
     db.add(session)
     db.flush()
 
-    # 10. Issue JWT
+    # sign the JWT
     token = create_access_token(
         card_id=card.id,
         account_id=card.linked_account_id,
@@ -203,7 +193,7 @@ def login(
     }
 
 
-# ── Logout ────────────────────────────────────────────────────────────────────
+# Logout logic
 
 def logout(
     db: Session,
@@ -229,7 +219,7 @@ def logout(
     )
 
 
-# ── Session validation ────────────────────────────────────────────────────────
+# Session validation logic
 
 def validate_session(db: Session, jti: str) -> ATMSession:
     """
@@ -266,7 +256,7 @@ def validate_session(db: Session, jti: str) -> ATMSession:
     return session
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# Internal helpers
 
 def _close_session(db: Session, session: ATMSession, reason: str) -> None:
     session.is_active = False

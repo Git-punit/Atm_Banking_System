@@ -1,14 +1,6 @@
-"""
-Fraud detection service.
-
-Performs lightweight, rule-based fraud checks on transactions.
-Suspicious patterns trigger audit log entries with severity="critical".
-
-Rules implemented:
-  1. Velocity check — more than 5 withdrawals in the last 10 minutes
-  2. Large withdrawal — single withdrawal > 80% of daily limit
-  3. Multiple ATM locations — transactions at different ATMs within 5 minutes
-"""
+# fraud_service.py
+# Rule-based fraud checks run on every withdrawal. Non-blocking —
+# suspicious hits are logged for human review rather than auto-rejected.
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -24,10 +16,9 @@ from app.services.audit_service import log_event
 
 logger = get_logger(__name__)
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
 VELOCITY_WINDOW_MINUTES = 10
 VELOCITY_MAX_TRANSACTIONS = 5
-LARGE_WITHDRAWAL_RATIO = 0.80   # fraction of daily limit
+LARGE_WITHDRAWAL_RATIO = 0.80  # percentage of daily limit that triggers the alert
 
 
 def check_withdrawal_fraud(
@@ -45,7 +36,7 @@ def check_withdrawal_fraud(
     masked_acc = mask_account_number(account.account_number)
     now = datetime.now(timezone.utc)
 
-    # ── Rule 1: Velocity check ────────────────────────────────────────────────
+    # rule 1: too many withdrawals in a short window
     window_start = now - timedelta(minutes=VELOCITY_WINDOW_MINUTES)
     recent_count = (
         db.query(Transaction)
@@ -75,7 +66,7 @@ def check_withdrawal_fraud(
             window_minutes=VELOCITY_WINDOW_MINUTES,
         )
 
-    # ── Rule 2: Large withdrawal ──────────────────────────────────────────────
+    # rule 2: single withdrawal is suspiciously large relative to daily limit
     threshold = account.daily_withdrawal_limit * LARGE_WITHDRAWAL_RATIO
     if amount >= threshold:
         log_event(
@@ -89,7 +80,7 @@ def check_withdrawal_fraud(
             severity="warning",
         )
 
-    # ── Rule 3: Multiple ATM locations ────────────────────────────────────────
+    # rule 3: same card used at two different ATMs within 5 minutes
     five_min_ago = now - timedelta(minutes=5)
     recent_atm_txn = (
         db.query(Transaction)

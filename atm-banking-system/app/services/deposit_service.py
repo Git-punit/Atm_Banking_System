@@ -1,10 +1,5 @@
-"""
-Cash Deposit Service.
-
-Handles deposits with configurable hold periods.
-Distinguishes between available_balance (immediately spendable)
-and total_balance (includes held funds).
-"""
+# deposit_service.py
+# Deposits go to total_balance immediately; available_balance updates after the hold clears.
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -56,11 +51,11 @@ def process_deposit(
     """
     masked_acc = mask_account_number(account.account_number)
 
-    # ── 1. ATM operational check ──────────────────────────────────────────────
+    # fail fast if ATM is down
     if not atm.is_operational:
         raise ATMOfflineError(f"ATM {atm.atm_code} is {atm.terminal_status}")
 
-    # ── 2. Amount validation ──────────────────────────────────────────────────
+    # basic sanity checks on the amount
     if amount <= 0:
         raise InvalidAmountError("Deposit amount must be positive")
 
@@ -73,7 +68,7 @@ def process_deposit(
             f"Maximum single deposit is {settings.max_single_deposit}"
         )
 
-    # ── 3. Account status check ───────────────────────────────────────────────
+    # make sure the account can receive money
     if account.account_status == "frozen":
         log_event(db, "deposit_failed", masked_account_ref=masked_acc,
                   atm_id=atm.id, description="Deposit on frozen account",
@@ -83,7 +78,7 @@ def process_deposit(
     if not account.is_active:
         raise AccountFrozenError(f"Account is {account.account_status}")
 
-    # ── 4. Apply hold logic ───────────────────────────────────────────────────
+    # apply hold: total goes up now, available only after hold_days
     hold_days = settings.deposit_hold_days
     hold_release_date: Optional[date] = None
 
@@ -99,7 +94,7 @@ def process_deposit(
     else:
         account.available_balance += amount
 
-    # ── 5. Update ATM cassette inventory ──────────────────────────────────────
+    # update ATM cassette with the deposited notes
     denom = settings.default_denomination
     notes_deposited = int(amount / denom)
     cassette = (
@@ -121,7 +116,7 @@ def process_deposit(
     atm.daily_transaction_count += 1
     atm.daily_transaction_volume += amount
 
-    # ── 6. Create transaction record ─────────────────────────────────────────
+    # write the transaction record
     ref_id = str(uuid.uuid4())
     hold_note = (
         f" (hold until {hold_release_date})" if hold_release_date else ""
@@ -140,7 +135,7 @@ def process_deposit(
     db.add(txn)
     db.flush()
 
-    # ── 7. Audit log ─────────────────────────────────────────────────────────
+    # audit trail
     log_event(
         db, "deposit_success",
         masked_account_ref=masked_acc,

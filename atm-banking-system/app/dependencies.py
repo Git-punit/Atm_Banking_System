@@ -1,12 +1,5 @@
-"""
-FastAPI dependency injection helpers.
-
-Provides:
-  - get_current_session  — validates JWT and returns the active ATMSession
-  - get_current_account  — returns the Account for the active session
-  - get_current_admin    — validates admin JWT and returns the AdminUser
-  - require_role         — role-based access control for admin endpoints
-"""
+# dependencies.py
+# FastAPI injectable dependencies for session/auth validation.
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -29,8 +22,6 @@ from app.services.auth_service import validate_session
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
-
-# ── ATM session dependencies ──────────────────────────────────────────────────
 
 def get_current_session(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -87,8 +78,6 @@ def get_current_account(
     return account
 
 
-# ── Admin dependencies ────────────────────────────────────────────────────────
-
 def get_current_admin(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     db: Annotated[Session, Depends(get_db)],
@@ -141,8 +130,6 @@ def require_role(*roles: str):
         return admin
     return _check
 
-
-# ── Exception → HTTP response mapper ─────────────────────────────────────────
 
 def atm_exception_handler(request: Request, exc: ATMBaseException):
     """Convert domain exceptions to structured JSON HTTP responses."""

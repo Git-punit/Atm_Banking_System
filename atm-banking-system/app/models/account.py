@@ -1,9 +1,4 @@
-"""
-Account ORM model.
 
-Represents a bank account that can be linked to one or more ATM cards.
-Supports savings, current, and salary account types.
-"""
 import uuid
 from datetime import date, datetime, timezone
 
@@ -26,10 +21,10 @@ from app.database import Base
 class Account(Base):
     __tablename__ = "accounts"
 
-    # ── Primary key ───────────────────────────────────────────────────────────
+    # primary key
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # ── Identity ──────────────────────────────────────────────────────────────
+    # identity
     account_number = Column(String(20), unique=True, nullable=False, index=True)
     account_holder_name = Column(String(200), nullable=False)
     account_type = Column(
@@ -38,11 +33,11 @@ class Account(Base):
         default="savings",
     )
 
-    # ── Balance ───────────────────────────────────────────────────────────────
+    # balances
     available_balance = Column(Float, nullable=False, default=0.0)
     total_balance = Column(Float, nullable=False, default=0.0)   # includes holds
 
-    # ── Limits ────────────────────────────────────────────────────────────────
+    # daily limits
     daily_withdrawal_limit = Column(Float, nullable=False, default=1000.0)
     daily_withdrawal_used = Column(Float, nullable=False, default=0.0)
     daily_withdrawal_reset_date = Column(Date, nullable=True)
@@ -51,7 +46,7 @@ class Account(Base):
     daily_transfer_used = Column(Float, nullable=False, default=0.0)
     daily_transfer_reset_date = Column(Date, nullable=True)
 
-    # ── Status ────────────────────────────────────────────────────────────────
+    # status flags
     account_status = Column(
         Enum("active", "frozen", "closed", "dormant", name="account_status_enum"),
         nullable=False,
@@ -59,21 +54,21 @@ class Account(Base):
     )
     is_joint_account = Column(Boolean, nullable=False, default=False)
 
-    # ── KYC / Compliance ──────────────────────────────────────────────────────
+    # kyc
     kyc_verification_status = Column(
         Enum("pending", "verified", "rejected", name="kyc_status_enum"),
         nullable=False,
         default="pending",
     )
 
-    # ── Organisation ─────────────────────────────────────────────────────────
+    # branch / currency
     branch_code = Column(String(20), nullable=False, default="HQ001")
     currency = Column(String(3), nullable=False, default="USD")
 
-    # ── Alerts ────────────────────────────────────────────────────────────────
+    # optional balance alert
     low_balance_threshold = Column(Float, nullable=True)
 
-    # ── Metadata ─────────────────────────────────────────────────────────────
+    # timestamps
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -87,19 +82,19 @@ class Account(Base):
     )
     notes = Column(Text, nullable=True)
 
-    # ── Relationships ─────────────────────────────────────────────────────────
+    # relationships
     cards = relationship("Card", back_populates="account", lazy="select")
     transactions = relationship(
         "Transaction", back_populates="account", lazy="dynamic"
     )
 
-    # ── Indexes ───────────────────────────────────────────────────────────────
+    # composite indexes
     __table_args__ = (
         Index("ix_accounts_status", "account_status"),
         Index("ix_accounts_branch", "branch_code"),
     )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # helpers
     def reset_daily_limits_if_needed(self) -> None:
         """Reset daily counters when the calendar date has rolled over."""
         today = date.today()

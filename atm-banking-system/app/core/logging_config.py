@@ -1,17 +1,6 @@
-"""
-Structured logging configuration using structlog.
-
-All log records include:
-  - timestamp (ISO-8601 UTC)
-  - log level
-  - ATM ID (when available)
-  - masked account/card references
-  - event type
-  - arbitrary key-value context
-
-Sensitive data (PINs, full card numbers, stack traces in production)
-is never emitted.
-"""
+# logging_config.py
+# Structured logging via structlog. Never emits PINs, full card numbers,
+# or stack traces in production.
 import logging
 import sys
 from typing import Any

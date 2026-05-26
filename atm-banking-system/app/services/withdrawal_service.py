@@ -1,17 +1,7 @@
-"""
-Cash Withdrawal Service.
-
-Implements real-world withdrawal processing with strict validation:
-  - Sufficient account balance
-  - Amount is a multiple of ATM denomination
-  - Per-transaction limit
-  - Daily withdrawal limit
-  - ATM cassette has enough physical notes
-  - Account is active and not frozen
-
-All balance and cassette deductions are performed atomically within
-the caller's database transaction.
-"""
+# withdrawal_service.py
+#
+# All the balance and cassette changes happen in the caller's DB transaction,
+# so if anything goes wrong it all rolls back cleanly.
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -49,34 +39,16 @@ def process_withdrawal(
     amount: float,
     ip_address: Optional[str] = None,
 ) -> Transaction:
-    """
-    Process a cash withdrawal request.
-
-    Args:
-        db:         Active database session (caller owns the transaction).
-        account:    The account to debit.
-        atm:        The ATM terminal dispensing cash.
-        amount:     Requested withdrawal amount (must be a positive integer).
-        ip_address: Client IP for audit logging.
-
-    Returns:
-        The completed Transaction record.
-
-    Raises:
-        AccountFrozenError, InsufficientFundsError, DailyLimitExceededError,
-        TransactionLimitExceededError, InvalidDenominationError,
-        ATMOutOfCashError, InsufficientATMCashError, ATMOfflineError.
-    """
     masked_acc = mask_account_number(account.account_number)
 
-    # ── 1. ATM operational check ──────────────────────────────────────────────
+    # fail fast if ATM is down or empty
     if not atm.is_operational:
         raise ATMOfflineError(f"ATM {atm.atm_code} is {atm.terminal_status}")
 
     if atm.total_cash_available <= 0:
         raise ATMOutOfCashError(f"ATM {atm.atm_code} is out of cash")
 
-    # ── 2. Account status check ───────────────────────────────────────────────
+    # check account can actually transact
     if account.account_status == "frozen":
         log_event(db, "withdrawal_failed", masked_account_ref=masked_acc,
                   atm_id=atm.id, description="Withdrawal on frozen account",
@@ -89,21 +61,21 @@ def process_withdrawal(
                   severity="warning")
         raise AccountFrozenError(f"Account is {account.account_status}")
 
-    # ── 3. Denomination check ─────────────────────────────────────────────────
+    # amount must be a whole multiple of the note denomination
     denom = settings.default_denomination
     if amount % denom != 0:
         raise InvalidDenominationError(
             f"Amount must be a multiple of {denom} (the ATM denomination)"
         )
 
-    # ── 4. Per-transaction limit ──────────────────────────────────────────────
+    # single-transaction cap
     if amount > settings.max_single_withdrawal:
         raise TransactionLimitExceededError(
             f"Single withdrawal limit is {settings.max_single_withdrawal}. "
             f"Requested: {amount}"
         )
 
-    # ── 5. Daily limit check ──────────────────────────────────────────────────
+    # rolling daily limit (resets at midnight)
     account.reset_daily_limits_if_needed()
     remaining_daily = account.daily_withdrawal_limit - account.daily_withdrawal_used
     if amount > remaining_daily:
@@ -116,7 +88,7 @@ def process_withdrawal(
             f"Remaining today: {remaining_daily:.2f}"
         )
 
-    # ── 6. Sufficient account balance ─────────────────────────────────────────
+    # finally, does the account actually have the money?
     if account.available_balance < amount:
         log_event(db, "withdrawal_failed", masked_account_ref=masked_acc,
                   atm_id=atm.id,
@@ -126,7 +98,8 @@ def process_withdrawal(
             f"Insufficient funds. Available: {account.available_balance:.2f}"
         )
 
-    # ── 7. ATM cassette inventory check ───────────────────────────────────────
+    # lock the cassette row to prevent a race where two withdrawals
+    # both see enough notes but together over-dispense
     notes_needed = int(amount / denom)
     cassette = (
         db.query(CashCassette)
@@ -149,10 +122,10 @@ def process_withdrawal(
             f"ATM can only dispense {available_cash:.2f} in {denom}-denomination notes"
         )
 
-    # ── 8. Fraud check ────────────────────────────────────────────────────────
+    # quick rule-based fraud scan (non-blocking)
     check_withdrawal_fraud(db, account, atm, amount)
 
-    # ── 9. Atomic deductions ──────────────────────────────────────────────────
+    # deduct everything atomically
     # Deduct account balance
     account.available_balance -= amount
     account.total_balance -= amount
@@ -171,7 +144,7 @@ def process_withdrawal(
     if atm.total_cash_available <= 0:
         atm.terminal_status = "out_of_cash"
 
-    # ── 10. Create transaction record ─────────────────────────────────────────
+    # write the transaction record
     ref_id = str(uuid.uuid4())
     txn = Transaction(
         reference_id=ref_id,
@@ -187,7 +160,7 @@ def process_withdrawal(
     db.add(txn)
     db.flush()
 
-    # ── 11. Audit log ─────────────────────────────────────────────────────────
+    # audit trail
     log_event(
         db, "withdrawal_success",
         masked_account_ref=masked_acc,
@@ -196,7 +169,7 @@ def process_withdrawal(
         ip_address=ip_address,
     )
 
-    # ── 12. Low-cash alert ────────────────────────────────────────────────────
+    # warn ops if cash is getting low
     if atm.total_cash_available < settings.low_cash_threshold:
         log_event(
             db, "low_cash_alert",

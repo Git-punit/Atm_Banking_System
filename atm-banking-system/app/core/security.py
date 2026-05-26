@@ -1,10 +1,5 @@
-"""
-Security utilities: PIN hashing, JWT creation/verification, token blacklisting.
-
-Supports both Argon2 (preferred) and bcrypt for PIN hashing.
-JWT tokens carry a `jti` claim that maps to the sessions table,
-enabling server-side invalidation.
-"""
+# security.py
+# PIN hashing (Argon2 preferred, bcrypt fallback), JWT helpers, and masking utilities.
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -16,9 +11,8 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# ── Password / PIN hashing context ───────────────────────────────────────────
-# Argon2 is the winner of the Password Hashing Competition and is preferred.
-# bcrypt is the fallback for environments where argon2-cffi is unavailable.
+# hashing context — Argon2 won the PHC competition, use bcrypt as fallback
+# for environments where argon2-cffi can't be installed
 _schemes = (
     ["argon2", "bcrypt"]
     if settings.pin_hash_algorithm == "argon2"
@@ -36,23 +30,19 @@ pwd_context = CryptContext(
 
 
 def hash_pin(plain_pin: str) -> str:
-    """Hash a plaintext PIN using the configured algorithm."""
+    """Hash a plaintext PIN."""
     return pwd_context.hash(plain_pin)
 
 
 def verify_pin(plain_pin: str, hashed_pin: str) -> bool:
-    """
-    Verify a plaintext PIN against its stored hash.
-    Returns True on match, False otherwise.
-    Never raises — callers must handle the False case.
-    """
+    """Verify a PIN against its hash."""
     try:
         return pwd_context.verify(plain_pin, hashed_pin)
     except Exception:
         return False
 
 
-# ── JWT helpers ───────────────────────────────────────────────────────────────
+
 
 def create_access_token(
     card_id: str,

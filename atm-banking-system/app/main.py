@@ -1,8 +1,5 @@
-"""
-ATM Banking System — FastAPI application entry point.
-
-Registers all routers, exception handlers, middleware, and startup hooks.
-"""
+# main.py — app factory and startup
+# wires up routers, middleware, and exception handlers
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -28,10 +25,10 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-# ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
+# startup / shutdown
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("startup", app=settings.app_name, env=settings.app_env)
     # Create tables in development/testing; use Alembic migrations in production
     if not settings.is_production:
@@ -41,7 +38,7 @@ async def lifespan(app: FastAPI):
     logger.info("shutdown", app=settings.app_name)
 
 
-# ── Application factory ───────────────────────────────────────────────────────
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -58,12 +55,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── Rate limiting ─────────────────────────────────────────────────────────
+    # rate limiting
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
 
-    # ── CORS ──────────────────────────────────────────────────────────────────
+    # cors
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if not settings.is_production else [],
@@ -72,7 +69,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Domain exception handler ──────────────────────────────────────────────
+    # map domain errors to structured JSON responses
     @app.exception_handler(ATMBaseException)
     async def atm_exception_handler(request: Request, exc: ATMBaseException):
         return JSONResponse(
@@ -80,7 +77,7 @@ def create_app() -> FastAPI:
             content=exc.to_dict(),
         )
 
-    # ── Generic 500 handler (never expose stack traces) ───────────────────────
+    # catch-all — never leak stack traces to the client
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
         logger.error("unhandled_exception", error=str(exc), path=request.url.path)
@@ -92,7 +89,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    # ── Routers ───────────────────────────────────────────────────────────────
+    # routers
     app.include_router(auth_router)
     app.include_router(admin_auth_router)
     app.include_router(account_router)
@@ -100,7 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(atm_router)
     app.include_router(admin_router)
 
-    # ── Health check ──────────────────────────────────────────────────────────
+
     @app.get("/health", tags=["Health"], summary="Health check")
     def health():
         return {

@@ -1,19 +1,5 @@
-"""
-Fund Transfer Service.
-
-Implements peer-to-peer transfers with explicit rollback handling.
-
-Transfer flow:
-  1. Validate destination account
-  2. Validate limits
-  3. DEBIT source account
-  4. CREDIT destination account
-     → If credit fails: ROLLBACK the debit (restore source balance)
-  5. Create two transaction records (debit leg + credit leg)
-  6. Audit log both legs
-
-Rollback comments explain exactly what state is restored and why.
-"""
+# transfer_service.py
+# Two-phase credit/debit with explicit rollback on credit failure.
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -47,32 +33,13 @@ def process_transfer(
     description: Optional[str] = None,
     ip_address: Optional[str] = None,
 ) -> dict:
-    """
-    Transfer funds from source_account to destination_account_number.
-
-    Args:
-        db:                          Active database session.
-        source_account:              The account to debit.
-        destination_account_number:  Account number of the recipient.
-        amount:                      Transfer amount (positive).
-        description:                 Optional transfer note.
-        ip_address:                  Client IP for audit logging.
-
-    Returns:
-        Dict with reference IDs, amounts, and updated balance.
-
-    Raises:
-        AccountNotFoundError, AccountFrozenError, InsufficientFundsError,
-        DailyLimitExceededError, TransactionLimitExceededError,
-        TransferRollbackError.
-    """
     masked_src = mask_account_number(source_account.account_number)
 
-    # ── 1. Source account checks ──────────────────────────────────────────────
+    # source account must be usable
     if not source_account.is_active:
         raise AccountFrozenError(f"Source account is {source_account.account_status}")
 
-    # ── 2. Destination account lookup ─────────────────────────────────────────
+    # look up the recipient
     dest_account = (
         db.query(Account)
         .filter(Account.account_number == destination_account_number)
@@ -88,17 +55,16 @@ def process_transfer(
 
     masked_dst = mask_account_number(dest_account.account_number)
 
-    # ── 3. Destination account status check ───────────────────────────────────
+    # destination must be able to receive funds
     if not dest_account.is_active:
         raise AccountFrozenError(
             f"Destination account is {dest_account.account_status} and cannot receive funds"
         )
 
-    # ── 4. Per-transaction limit ──────────────────────────────────────────────
     # (No hard per-transaction limit for transfers in this config,
     #  but daily limit applies)
 
-    # ── 5. Daily transfer limit ───────────────────────────────────────────────
+    # rolling daily transfer limit
     source_account.reset_daily_limits_if_needed()
     remaining_daily = source_account.daily_transfer_limit - source_account.daily_transfer_used
     if amount > remaining_daily:
@@ -112,7 +78,7 @@ def process_transfer(
             f"Daily transfer limit exceeded. Remaining today: {remaining_daily:.2f}"
         )
 
-    # ── 6. Sufficient balance check ───────────────────────────────────────────
+    # does the source have enough?
     if source_account.available_balance < amount:
         log_event(
             db, "transfer_failed",
@@ -124,7 +90,7 @@ def process_transfer(
             f"Insufficient funds. Available: {source_account.available_balance:.2f}"
         )
 
-    # ── 7. DEBIT source account ───────────────────────────────────────────────
+    # debit the source, saving pre-debit state so we can undo if the credit fails
     # Save pre-debit balance for rollback
     pre_debit_balance = source_account.available_balance
     pre_debit_total = source_account.total_balance
@@ -134,7 +100,7 @@ def process_transfer(
     source_account.total_balance -= amount
     source_account.daily_transfer_used += amount
 
-    # ── 8. CREDIT destination account ────────────────────────────────────────
+    # credit the destination; if this blows up, undo the debit above
     # If this step fails, we must roll back the debit above.
     try:
         dest_account.available_balance += amount
@@ -168,7 +134,7 @@ def process_transfer(
             "No funds were moved."
         ) from exc
 
-    # ── 9. Create transaction records ─────────────────────────────────────────
+    # write a debit record and a matching credit record, linked by ref IDs
     shared_ref = str(uuid.uuid4())   # links the two legs together
     debit_ref = str(uuid.uuid4())
     credit_ref = str(uuid.uuid4())
@@ -203,7 +169,7 @@ def process_transfer(
     db.add(credit_txn)
     db.flush()
 
-    # ── 10. Audit log ─────────────────────────────────────────────────────────
+    # audit trail
     log_event(
         db, "transfer_success",
         masked_account_ref=masked_src,

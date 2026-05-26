@@ -1,10 +1,5 @@
-"""
-Authentication router.
-
-POST /auth/login   — card + PIN authentication, returns JWT
-POST /auth/logout  — invalidates the current session
-POST /admin/auth/login — admin authentication
-"""
+# auth.py router
+# POST /auth/login, POST /auth/logout, POST /admin/auth/login
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -94,7 +89,7 @@ def logout(
         ) from exc
 
 
-# ── Admin auth ────────────────────────────────────────────────────────────────
+# admin auth endpoint
 
 @admin_auth_router.post(
     "/login",

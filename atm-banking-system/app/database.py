@@ -1,9 +1,4 @@
-"""
-Database engine, session factory, and base model setup.
 
-Supports both PostgreSQL (production) and SQLite (development/testing)
-via a single DATABASE_URL environment variable.
-"""
 from contextlib import contextmanager
 from typing import Generator
 
@@ -14,7 +9,7 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# ── Engine ────────────────────────────────────────────────────────────────────
+# engine setup
 _connect_args: dict = {}
 if settings.database_url.startswith("sqlite"):
     # SQLite requires check_same_thread=False for multi-threaded use
@@ -39,7 +34,7 @@ if settings.database_url.startswith("sqlite"):
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-# ── Session factory ───────────────────────────────────────────────────────────
+# session factory
 SessionLocal = sessionmaker(
     bind=engine,
     autocommit=False,
@@ -48,13 +43,13 @@ SessionLocal = sessionmaker(
 )
 
 
-# ── Declarative base ──────────────────────────────────────────────────────────
+
 class Base(DeclarativeBase):
     """All ORM models inherit from this base."""
     pass
 
 
-# ── Dependency helpers ────────────────────────────────────────────────────────
+
 def get_db() -> Generator[Session, None, None]:
     """
     FastAPI dependency that yields a database session and guarantees

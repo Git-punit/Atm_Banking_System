@@ -1,9 +1,4 @@
-"""
-Admin service.
 
-Handles admin user management, card blocking/unblocking,
-account freeze/unfreeze, and reporting.
-"""
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -26,8 +21,6 @@ from app.services.audit_service import log_event
 
 logger = get_logger(__name__)
 
-
-# ── Admin user management ─────────────────────────────────────────────────────
 
 def create_admin(
     db: Session,
@@ -77,8 +70,6 @@ def get_admin_by_id(db: Session, admin_id: str) -> AdminUser:
         raise AdminNotFoundError(f"Admin {admin_id} not found")
     return admin
 
-
-# ── Card management ───────────────────────────────────────────────────────────
 
 def block_card(
     db: Session,
@@ -132,8 +123,6 @@ def unblock_card(
     return card
 
 
-# ── Account management ────────────────────────────────────────────────────────
-
 def freeze_account(
     db: Session,
     account_id: str,
@@ -182,8 +171,6 @@ def unfreeze_account(
     )
     return account
 
-
-# ── Reporting ─────────────────────────────────────────────────────────────────
 
 def get_transaction_report(
     db: Session,

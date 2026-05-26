@@ -1,12 +1,4 @@
-"""
-Transaction router.
 
-POST /transaction/withdraw  — cash withdrawal
-POST /transaction/deposit   — cash deposit
-POST /transaction/transfer  — fund transfer
-GET  /transaction/history   — paginated transaction history
-GET  /transaction/statement — mini-statement (last 10 transactions)
-"""
 import math
 from datetime import datetime, timezone
 from typing import Annotated
@@ -46,8 +38,6 @@ def _get_atm(db: Session, atm_id: str) -> ATMTerminal:
         )
     return atm
 
-
-# ── Withdrawal ────────────────────────────────────────────────────────────────
 
 @router.post(
     "/withdraw",
@@ -90,8 +80,6 @@ def withdraw(
             detail={"error_code": "INTERNAL_ERROR", "message": "Withdrawal failed"},
         ) from exc
 
-
-# ── Deposit ───────────────────────────────────────────────────────────────────
 
 @router.post(
     "/deposit",
@@ -138,8 +126,6 @@ def deposit(
         ) from exc
 
 
-# ── Transfer ──────────────────────────────────────────────────────────────────
-
 @router.post(
     "/transfer",
     response_model=TransferResponse,
@@ -175,8 +161,6 @@ def transfer(
         ) from exc
 
 
-# ── Mini-statement ────────────────────────────────────────────────────────────
-
 @router.get(
     "/statement",
     response_model=MiniStatementResponse,
@@ -209,8 +193,6 @@ def mini_statement(
         generated_at=datetime.now(timezone.utc),
     )
 
-
-# ── Transaction history ───────────────────────────────────────────────────────
 
 @router.get(
     "/history",
