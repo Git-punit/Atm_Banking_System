@@ -1,56 +1,51 @@
-# ATM Banking System
+#ATM Banking System
 
-## 1. Role
-You are a senior Python backend engineer at a fintech company. You build robust, high-concurrency systems for the financial sector. Your code is clean, pragmatic, and designed for real-world constraints.
+##1. Role
+You are a senior Python backend engineer. You build robust, high-concurrency systems for the financial sector. Your code is clean, pragmatic, and designed for real-world constraints.
 
-## 2. Context
-This is the backend for a bank's ATM network. Hundreds of physical terminals, one central server, real cash constraints. I built it at a fintech company and the spec came from an actual bank, so the edge cases are real — not hypothetical.
+##2. Context
+This is the backend for a bank's ATM network. Hundreds of physical terminals, one central server, real cash constraints. I built it at a fintech company and the spec came from an actual bank, so the edge cases are real not hypothetical.
 
-Most ATM backends treat concurrency as someone else's problem. Two terminals hit the same account at once and you either get a race condition or a deadlock. A cassette runs dry and the system doesn't know until a customer gets an empty dispense. Sessions don't actually die — they just stop being checked.
+Most ATM backends treat concurrency as someone else's problem. Two terminals hit the same account at once and you either get a race condition or a deadlock. A cassette runs dry and the system doesn't know until a customer gets an empty dispense. Sessions don't actually die they just stop being checked.
 
-This system treats those as first-class problems. The withdrawal endpoint holds a `SELECT FOR UPDATE` on the cassette row. Sessions expire at 90 seconds of inactivity and the check runs on every request, not in a background job. Card locks write to the database immediately and survive server restarts — which sounds obvious, but I've seen three production systems where the lock lived in Redis with a TTL.
+This system treats those as first-class problems. The withdrawal endpoint holds a SELECT FOR UPDATE on the cassette row. Sessions expire at 90 seconds of inactivity and the check runs on every request, not in a background job. Card locks write to the database immediately and survive server restarts which sounds obvious, but I've seen three production systems where the lock lived in Redis with a TTL.
 
-## 3. Task
+ ##3. Task
 Your task is to build the complete, production-ready API backend for this ATM system. You need to implement the database schema, core banking logic, API endpoints, authentication flows, and administrative controls.
----
 
 ## Why This Exists
 
-Most ATM backends I've seen treat concurrency as someone else's problem. Two terminals hit the same account at once and you either get a race condition or a deadlock. A cassette runs dry and the system doesn't know until a customer gets an empty dispense. Sessions don't actually die — they just stop being checked.
+Most ATM backends I've seen treat concurrency as someone else's problem. Two terminals hit the same account at once and you either get a race condition or a deadlock. A cassette runs dry and the system doesn't know until a customer gets an empty dispense. Sessions don't actually die they just stop being checked.
 
-This system treats those as first-class problems. The withdrawal endpoint holds a `SELECT FOR UPDATE` on the cassette row. Sessions expire at 90 seconds of inactivity and the check runs on every request, not in a background job. Card locks write to the database immediately and survive server restarts -> which sounds obvious, but I've seen three production systems where the lock lived in Redis with a TTL.
+This system treats those as first-class problems. The withdrawal endpoint holds a SELECT FOR UPDATE on the cassette row. Sessions expire at 90 seconds of inactivity and the check runs on every request, not in a background job. Card locks write to the database immediately and survive server restarts which sounds obvious, but I've seen three production systems where the lock lived in Redis with a TTL.
 
----
 
 ## Table of Contents
 
-- [Stack](#stack)
-- [Local Setup](#local-setup)
-- [Running with Docker](#running-with-docker)
-- [Environment Variables](#environment-variables)
-- [Database Schema](#database-schema)
-- [API Endpoints](#api-endpoints)
-- [Authentication Flow](#authentication-flow)
-- [Withdrawal Logic](#withdrawal-logic)
-- [Deposits](#deposits)
-- [Transfers](#transfers)
-- [Fraud Detection](#fraud-detection)
-- [Admin Panel](#admin-panel)
-- [Tests](#tests)
-- [Seeding Data](#seeding-data)
-- [Creating an Admin](#creating-an-admin)
-
----
+- Stack
+- Local Setup
+- Running with Docker
+- Environment Variables
+- Database Schema
+- API Endpoints
+- Authentication Flow
+- Withdrawal Logic
+- Deposits
+- Transfers
+- Fraud Detection
+- Admin Panel
+- Tests
+- Seeding Data
+- Creating an Admin
 
 ## Stack
 
-Python 3.11 and FastAPI for the API layer. SQLAlchemy 2.x with declarative models, Pydantic v2 in strict mode for validation. JWTs via python jose, PIN hashing via passlib (Argon2id by default, bcrypt as fallback). Alembic for migrations. structlog for logging -> structured dicts only, no free-form strings. SlowAPI for rate limiting.
+Python 3.11 and FastAPI for the API layer. SQLAlchemy 2.x with declarative models, Pydantic v2 in strict mode for validation. JWTs via python jose, PIN hashing via passlib (Argon2id by default, bcrypt as fallback). Alembic for migrations. structlog for logging structured dicts only, no free-form strings. SlowAPI for rate limiting.
 
 Tests run with pytest and httpx. Load testing uses Locust. Deployment is Docker + docker-compose.
 
-SQLite works fine for local dev and test runs. PostgreSQL is what you want in production -> the performance targets (p95 under 200ms on transaction endpoints) are measured against Postgres, not SQLite.
+SQLite works fine for local dev and test runs. PostgreSQL is what you want in production the performance targets (p95 under 200ms on transaction endpoints) are measured against Postgres, not SQLite.
 
----
 
 ## Local Setup
 
@@ -76,7 +71,7 @@ python scripts/create_admin.py
 uvicorn app.main:app --reload
 ```
 
-API runs at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs` — useful for manual testing before wiring up a frontend.
+API runs at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs` useful for manual testing before wiring up a frontend.
 
 ---
 
@@ -109,8 +104,7 @@ docker compose up --build
 
 Three of these are required and have no defaults. The app won't start without them. The rest have sensible defaults you can leave alone for local dev.
 
-```
-# Required — no defaults
+``` Required —> no defaults
 SECRET_KEY                   JWT signing secret for cardholder tokens
 ADMIN_SECRET_KEY             JWT signing secret for admin tokens (separate from above)
 CARD_NUMBER_ENCRYPTION_KEY   AES-256 key; card numbers are encrypted before they touch the DB
@@ -160,7 +154,7 @@ LOG_FORMAT                   json | console (default: console for local, json fo
 
 ## Database Schema
 
-Eight tables. Migrations are in `migrations/versions/` — run `alembic upgrade head` before anything else.
+Eight tables. Migrations are in `migrations/versions/` -run `alembic upgrade head` before anything else.
 
 ### accounts
 
@@ -187,7 +181,7 @@ notes                       TEXT, nullable
 created_at / updated_at     TIMESTAMPTZ
 ```
 
-`available_balance` and `total_balance` are separate columns. They diverge during deposit holds and they need to stay separate — collapsing them into one field is a common mistake that requires a painful migration to undo later.
+`available_balance` and `total_balance` are separate columns. They diverge during deposit holds and they need to stay separate collapsing them into one field is a common mistake that requires a painful migration to undo later.
 
 Daily limit resets are inline. When a withdrawal request comes in, check `daily_withdrawal_reset_date`. If it's before today, zero out `daily_withdrawal_used` and update the date in the same transaction. No scheduler needed.
 
@@ -195,7 +189,7 @@ Daily limit resets are inline. When a withdrawal request comes in, check `daily_
 
 ```
 id                   UUID, PK
-card_number          VARCHAR(16), UNIQUE  — AES-256 encrypted at rest
+card_number          VARCHAR(16), UNIQUE  —> AES-256 encrypted at rest
 linked_account_id    FK → accounts.id
 card_status          active | blocked | expired | lost_stolen
 expiry_date          DATE
@@ -210,7 +204,7 @@ issued_at / created_at / updated_at  TIMESTAMPTZ
 
 ```
 id           UUID, PK
-jti          VARCHAR(36), UNIQUE  — matches the JWT jti claim 1:1
+jti          VARCHAR(36), UNIQUE  —> matches the JWT jti claim 1:1
 card_id      FK → cards.id
 account_id   FK → accounts.id
 atm_id       FK → atm_terminals.id
@@ -220,7 +214,7 @@ last_active  TIMESTAMPTZ
 ended_at     TIMESTAMPTZ, nullable
 ```
 
-`jti` is what lets us invalidate tokens server-side. Every authenticated request does one indexed lookup on this column. It needs to be fast — session validation should add less than 5ms per request.
+`jti` is what lets us invalidate tokens server-side. Every authenticated request does one indexed lookup on this column. It needs to be fast  session validation should add less than 5ms per request.
 
 ### atm_terminals
 
@@ -243,7 +237,7 @@ created_at / updated_at  TIMESTAMPTZ
 ```
 id           UUID, PK
 atm_id       FK → atm_terminals.id
-denomination INT    — 20 = $20 notes
+denomination INT     20 = $20 notes
 note_count   INT
 updated_at   TIMESTAMPTZ
 ```
@@ -255,18 +249,18 @@ Each ATM can have multiple cassettes for different denominations. The withdrawal
 ```
 id                  UUID, PK
 reference_id        VARCHAR(36), UNIQUE
-group_reference_id  VARCHAR(36), nullable  — links both legs of a transfer
+group_reference_id  VARCHAR(36), nullable  —> links both legs of a transfer
 account_id          FK → accounts.id
 atm_id              FK → atm_terminals.id, nullable
 transaction_type    withdrawal | deposit | transfer_debit | transfer_credit
-amount              DECIMAL(15,2)  — negative for debits, positive for credits
-balance_after       DECIMAL(15,2)  — snapshot of available_balance after this row
+amount              DECIMAL(15,2)  —> negative for debits, positive for credits
+balance_after       DECIMAL(15,2)  —> snapshot of available_balance after this row
 description         TEXT, nullable
 status              completed | failed | pending | reversed
 created_at          TIMESTAMPTZ
 ```
 
-Composite index on `(account_id, created_at DESC)` for history queries. Transaction history pagination uses DB-level `LIMIT`/`OFFSET` — not pulling everything into Python and slicing.
+Composite index on `(account_id, created_at DESC)` for history queries. Transaction history pagination uses DB-level `LIMIT`/`OFFSET`  not pulling everything into Python and slicing.
 
 ### audit_logs
 
@@ -274,16 +268,16 @@ Composite index on `(account_id, created_at DESC)` for history queries. Transact
 id                  UUID, PK
 event_type          VARCHAR(100)
 atm_id              FK → atm_terminals.id, nullable
-masked_account_ref  VARCHAR(50)   — last 4 digits, e.g. "****1234"
+masked_account_ref  VARCHAR(50)   —> last 4 digits, e.g. "****1234"
 masked_card_ref     VARCHAR(50), nullable
 description         TEXT
 severity            info | warning | critical
 ip_address          VARCHAR(45), nullable
 metadata            JSON, nullable
-created_at          TIMESTAMPTZ   — no updated_at; this table is append-only
+created_at          TIMESTAMPTZ   —> no updated_at; this table is append-only
 ```
 
-No `UPDATE` or `DELETE` ever runs on this table. The application code makes that impossible to do accidentally — not just by convention, but structurally.
+No `UPDATE` or `DELETE` ever runs on this table. The application code makes that impossible to do accidentally  not just by convention, but structurally.
 
 ### admin_users
 
@@ -318,7 +312,7 @@ GET    /atm/{atm_id}/status
 GET    /health
 ```
 
-`/health` and `/auth/login` don't require a token. Everything else does — `Authorization: Bearer <token>` header.
+`/health` and `/auth/login` don't require a token. Everything else does  `Authorization: Bearer <token>` header.
 
 ### Admin
 
@@ -337,7 +331,7 @@ GET    /admin/reports/suspicious        audit rows where severity = critical
 POST   /admin/users/create             superadmin only
 ```
 
-Every response is a JSON object. Success responses have a `data` key. Errors always have `error_code`, `message`, and `http_status` — never a raw string or a 200 wrapping a failure.
+Every response is a JSON object. Success responses have a `data` key. Errors always have `error_code`, `message`, and `http_status`  never a raw string or a 200 wrapping a failure.
 
 ---
 
@@ -345,7 +339,7 @@ Every response is a JSON object. Success responses have a `data` key. Errors alw
 
 These steps run in this order every time a card is presented. Don't change the sequence.
 
-1. Luhn check on the card number. Fails? Stop here — no DB query.
+1. Luhn check on the card number. Fails? Stop here —> no DB query.
 2. ATM lookup. Terminal isn't `online`? Return `ATM_OFFLINE`.
 3. Card lookup. Not found? Generic error — don't reveal whether the card or PIN was the problem.
 4. Check `lost_or_stolen_flag`, `card_status`, `expiry_date`. Each has its own error code.
@@ -364,14 +358,14 @@ On every authenticated request the session check works like this: decode JWT and
 
 Check order matters here. The first failure stops everything. Nothing writes to the database until all eight checks pass.
 
-1. `atm.terminal_status == 'online'` — `ATM_OFFLINE` (503) otherwise
-2. `atm.total_cash_available > 0` — `ATM_OUT_OF_CASH` (503) otherwise
-3. `account.account_status == 'active'` — `ACCOUNT_FROZEN` (403) otherwise
-4. Amount divisible by denomination — `INVALID_DENOMINATION` (400) otherwise
-5. Amount within per-transaction cap — `TRANSACTION_LIMIT_EXCEEDED` (422) otherwise
-6. Amount within remaining daily limit — `DAILY_LIMIT_EXCEEDED` (422) otherwise
-7. `account.available_balance >= amount` — `INSUFFICIENT_FUNDS` (422) otherwise
-8. `SELECT ... FOR UPDATE` on the cassette row, verify note count — `INSUFFICIENT_ATM_CASH` (503) otherwise
+1. `atm.terminal_status == 'online'` —> `ATM_OFFLINE` (503) otherwise
+2. `atm.total_cash_available > 0` —> `ATM_OUT_OF_CASH` (503) otherwise
+3. `account.account_status == 'active'` —> `ACCOUNT_FROZEN` (403) otherwise
+4. Amount divisible by denomination —> `INVALID_DENOMINATION` (400) otherwise
+5. Amount within per-transaction cap —> `TRANSACTION_LIMIT_EXCEEDED` (422) otherwise
+6. Amount within remaining daily limit —> `DAILY_LIMIT_EXCEEDED` (422) otherwise
+7. `account.available_balance >= amount` —> `INSUFFICIENT_FUNDS` (422) otherwise
+8. `SELECT ... FOR UPDATE` on the cassette row, verify note count —> `INSUFFICIENT_ATM_CASH` (503) otherwise
 
 After that, fraud checks run. Non-blocking by default. If they pass, everything commits in one transaction:
 
@@ -395,7 +389,7 @@ After committing, if `total_cash_available` dropped below `LOW_CASH_THRESHOLD`, 
 
 Simpler than withdrawal. Reject amounts <= 0 (`INVALID_AMOUNT`), amounts above the configured ceiling (`TRANSACTION_LIMIT_EXCEEDED`), and inactive accounts (`ACCOUNT_FROZEN`).
 
-If `DEPOSIT_HOLD_DAYS` is greater than zero: `total_balance` increases immediately, `available_balance` stays put until the hold releases. The hold release date goes in the transaction description — that's the human-readable record of when the funds will clear.
+If `DEPOSIT_HOLD_DAYS` is greater than zero: `total_balance` increases immediately, `available_balance` stays put until the hold releases. The hold release date goes in the transaction description  that's the human-readable record of when the funds will clear.
 
 If `DEPOSIT_HOLD_DAYS` is zero, both balances go up at once.
 
@@ -410,7 +404,7 @@ Validate first: source account is `active`, destination exists and is `active`, 
 Then two-phase processing:
 
 ```python
-# Phase 1 — debit source
+# Phase 1 —> debit source
 pre_debit_available = source.available_balance
 pre_debit_total     = source.total_balance
 
@@ -418,7 +412,7 @@ source.available_balance   -= amount
 source.total_balance       -= amount
 source.daily_transfer_used += amount
 
-# Phase 2 — credit destination
+# Phase 2 —> credit destination
 try:
     dest.available_balance += amount
     dest.total_balance     += amount
@@ -439,11 +433,11 @@ Two transaction rows, same `group_reference_id`: `transfer_debit` on the source 
 
 Runs post-validation, pre-commit. Three rules:
 
-**Velocity** — more than 5 withdrawals from the same account in 10 minutes. Severity: critical.
+**Velocity**  more than 5 withdrawals from the same account in 10 minutes. Severity: critical.
 
-**Large withdrawal** — amount is 80% or more of the daily limit. Severity: warning.
+**Large withdrawal**  amount is 80% or more of the daily limit. Severity: warning.
 
-**ATM hopping** — same card used at a different terminal in the last 5 minutes. Severity: critical.
+**ATM hopping**  same card used at a different terminal in the last 5 minutes. Severity: critical.
 
 By default, fraud hits log a warning and the transaction goes through. Set `FRAUD_BLOCK_ON_CRITICAL=true` to auto-reject on critical hits. Every fraud audit entry includes the masked account ref, masked card ref, ATM ID, amount, rule name, and severity.
 
@@ -451,7 +445,7 @@ By default, fraud hits log a warning and the transaction goes through. Set `FRAU
 
 ## Admin Panel
 
-Admins authenticate separately — different table, different JWT secret, 8-hour tokens.
+Admins authenticate separately —> different table, different JWT secret, 8-hour tokens.
 
 | Action | superadmin | admin | auditor |
 |---|---|---|---|
@@ -476,7 +470,7 @@ Tests check DB state, not just HTTP responses. A withdrawal test that doesn't ve
 
 Scenarios the test suite covers:
 
-Correct PIN login creates a session row and returns a JWT with `failed_attempt_count = 0`. Three wrong PINs set `failed_attempt_count = 3` and flip `card_status` to `blocked`. Then you restart the server and try to log in again — still blocked. That last part is the persistence test. It's what proves the lock isn't in memory.
+Correct PIN login creates a session row and returns a JWT with `failed_attempt_count = 0`. Three wrong PINs set `failed_attempt_count = 3` and flip `card_status` to `blocked`. Then you restart the server and try to log in again still blocked. That last part is the persistence test. It's what proves the lock isn't in memory.
 
 Successful withdrawal reduces `available_balance`, reduces cassette `note_count`, and inserts one transaction row. Insufficient balance returns 422 with zero DB changes. Daily limit breach returns 422 without touching `daily_withdrawal_used`. Non-denomination amount returns 400 before any DB query past auth. Empty cassette returns 503.
 
@@ -514,8 +508,8 @@ Prompts for a username and password and creates a superadmin account. Run this o
 
 ## A Few Things Worth Knowing
 
-Card numbers are AES-256 encrypted before they touch the database. The encryption key comes from `CARD_NUMBER_ENCRYPTION_KEY`. Plaintext card numbers don't appear anywhere in the database — not in logs, not in error messages.
+Card numbers are AES-256 encrypted before they touch the database. The encryption key comes from `CARD_NUMBER_ENCRYPTION_KEY`. Plaintext card numbers don't appear anywhere in the database  not in logs, not in error messages.
 
 All logs use structlog with structured dicts. No free-form strings. Every log record includes `event`, `timestamp`, `atm_id` (when available), `masked_account_ref` (last 4 digits only), and `severity`. Full card numbers and PINs never appear in any log. The masking happens before the log is written, not after.
 
-The `audit_logs` table is append-only. There's no code path that runs `UPDATE` or `DELETE` against it. That's not enforced by a database trigger — it's enforced by the application layer not having those operations on that model. If you ever see an update or delete query targeting `audit_logs` in a migration or a service, that's a mistake.
+The `audit_logs` table is append-only. There's no code path that runs `UPDATE` or `DELETE` against it. That's not enforced by a database trigger  it's enforced by the application layer not having those operations on that model. If you ever see an update or delete query targeting `audit_logs` in a migration or a service, that's a mistake.
