@@ -513,3 +513,7 @@ Card numbers are AES-256 encrypted before they touch the database. The encryptio
 All logs use structlog with structured dicts. No free-form strings. Every log record includes `event`, `timestamp`, `atm_id` (when available), `masked_account_ref` (last 4 digits only), and `severity`. Full card numbers and PINs never appear in any log. The masking happens before the log is written, not after.
 
 The `audit_logs` table is append-only. There's no code path that runs `UPDATE` or `DELETE` against it. That's not enforced by a database trigger  it's enforced by the application layer not having those operations on that model. If you ever see an update or delete query targeting `audit_logs` in a migration or a service, that's a mistake.
+
+
+
+make it like human write it not AI
